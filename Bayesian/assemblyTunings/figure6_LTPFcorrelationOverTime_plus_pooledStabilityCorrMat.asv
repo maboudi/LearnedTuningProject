@@ -1,0 +1,970 @@
+% In comparison to the previous version, I tried to make it more compatible
+% with how the PF learned tuning was compared to its shuffle in Figure 2
+
+
+
+clear
+clc
+close all
+
+
+parentDir = '/home/kouroshmaboudi/Documents/NCMLproject/assemblyTuning_finalResults/';
+
+rr = dir(parentDir);
+
+
+currSessions = 1:17;
+nSessions    = numel(currSessions);
+
+
+startT = cell(nSessions, 1);
+endT   = cell(nSessions, 1);
+
+
+activeUnits = cell(nSessions, 1);
+epochNames = {'pre'; 'run'; 'post'};
+
+
+% initialize the variables
+spatialTunings        = cell(nSessions, 1);
+binCenters            = cell(nSessions, 1);
+binCenters_nonOverlap = cell(nSessions, 1);
+
+assemblyTunings_time = cell(nSessions, 1);
+
+
+% Pearson correlation; between learned tunnings of different units and between learned tunings
+% and the correponding place fields of individual units
+
+assemblyTuningPFcorr                   = cell(nSessions, 1);
+assemblyTuningPFcorr_pscore            = cell(nSessions, 1);
+assemblyTuningPFcorr_time              = cell(nSessions, 1);
+assemblyTuningPFcorr_time_shuffle      = cell(nSessions, 1);
+assemblyTuningPFcorr_time_prctileScore = cell(nSessions, 1);
+    
+
+% KL  diveregenc (the same manner as the Pearson correlation)
+
+% assemblyTuningPFKLdiv                   = cell(nSessions, 1);
+% assemblyTuningPFKLdiv_pscore            = cell(nSessions, 1);
+% assemblyTuningPFKLdiv_time              = cell(nSessions, 1);
+% assemblyTuningPFKLdiv_time_shuffle      = cell(nSessions, 1);
+% assemblyTuningPFKLdiv_time_prctileScore = cell(nSessions, 1);
+
+
+epochsXCorr        = cell(nSessions, 1);
+epochsXCorr_zscore = cell(nSessions, 1);
+
+
+gw = gausswindow(5,15);
+flag = 1;
+
+%% calculate matching scores for all sessions
+
+for iSess = 1:nSessions
+
+    
+sessionNumber = currSessions(iSess);
+sessionName   = rr(sessionNumber+2).name
+basePath      = fullfile(parentDir, sessionName);
+
+
+
+% % % SWR LEARNED TUNINGS
+
+
+% % learned tunings calculated based on the entire epochs
+s = load(fullfile(basePath, 'assemblyTunings', [sessionName '.assemblyTunings_allPBEs_Lthresh1e_3.mat']), ...
+    'activeUnits', ...
+    'assemblyTuningPFcorr');%, ...
+%     'assemblyTuningPFKLdiv');
+
+activeUnits{iSess} = s.activeUnits;
+okUnits = intersect(intersect(activeUnits{iSess}.pre, activeUnits{iSess}.post), activeUnits{iSess}.run);
+
+
+
+% % % spikes and behavior data
+load(fullfile(basePath, 'spikes', [sessionName '.spikes.mat']), 'fileInfo', 'spikes_pyr')
+
+behavior = fileInfo.behavior;
+behavior.time = behavior.time/3600; % to hours
+
+startT{iSess}.pre  = behavior.time(1,1); endT{iSess}.pre  = behavior.time(2,1); 
+startT{iSess}.run  = behavior.time(2,1); endT{iSess}.run  = behavior.time(2,2); 
+startT{iSess}.post = behavior.time(3,1); endT{iSess}.post = behavior.time(3,2); % in long recordings only the first 4 hours of post sleep is used in this figures 
+
+
+
+% spikes and place field of the units
+
+
+spikes = spikes_pyr;
+
+
+% the place fields of the ok units
+
+spikes = spikes(okUnits);
+nUnits = numel(spikes);
+
+% track spatial tunings
+nPosBins = numel(spikes(1).spatialTuning_smoothed.uni);
+
+
+% non-directional spatial tuning
+spatialTunings_merge = zeros(nUnits, nPosBins); %_interp
+
+peakPFlocation    = zeros(nUnits, 1);
+peakPFfiring      = zeros(nUnits, 1);
+
+
+for iUnit = 1:nUnits
+
+    currSpatialTuning = spikes(iUnit).spatialTuning_smoothed.uni;
+    currSpatialTuning = currSpatialTuning./max(currSpatialTuning);
+
+    spatialTunings_merge(iUnit, :) = currSpatialTuning;
+    [peakPFfiring(iUnit), peakPFlocation(iUnit)] = max(currSpatialTuning);
+
+end
+
+[~, sortIdx] = sort(peakPFlocation, 'ascend');
+sortedUnitIdx = okUnits(sortIdx);
+
+
+temp = sum(spatialTunings_merge, 1);
+if flag == 1
+    startBin = find(~isnan(temp), 1, 'first');
+    endBin   = find(~isnan(temp), 1, 'last');
+    flag = 0;
+end
+
+spatialTunings{iSess} = spatialTunings_merge(sortIdx, :); % startBin:endBin
+
+nPosBins_interp = endBin - startBin + 1;
+    
+
+
+
+% % learned tunings in 15-minutes time windows
+
+s = load(fullfile(basePath, 'assemblyTunings', [sessionName '.assemblyTuning_vs_time_Jan2022.mat']), ...
+        'binCenters', ...
+        'assemblyTunings_time', ...
+        'assemblyTuningPFcorr_time');%, ...
+%         'assemblyTuningPFKLdiv_time');
+    
+binCenters{iSess} = s.binCenters;
+
+for iEpoch = 1:numel(epochNames)
+    currEpoch = epochNames{iEpoch};
+
+    binCenters{iSess}.(currEpoch) = binCenters{iSess}.(currEpoch)/3600;
+
+    assemblyTuningPFcorr_time{iSess}.(currEpoch)  = s.assemblyTuningPFcorr_time.(currEpoch)(sortedUnitIdx, :);
+
+end
+
+
+
+
+% truncate the long recording sessions 
+% in case we need the 4 first 4 hours of post sleep
+
+idx = find(binCenters{iSess}.post <= endT{iSess}.post);
+
+binCenters{iSess}.post = binCenters{iSess}.post(idx);
+
+assemblyTuningPFcorr_time{iSess}.post  = assemblyTuningPFcorr_time{iSess}.post(:, idx);
+
+
+for iEpoch = 1:3
+    currEpoch = epochNames{iEpoch};
+    currLTs   = s.assemblyTunings_time.(currEpoch).data;
+    
+    nTimeBins = size(currLTs, 3);
+
+
+    % assembly Tunings
+    assemblyTunings_time{iSess}.(currEpoch) = nan(nUnits, nPosBins, nTimeBins);% nPosBins_interp
+
+    for iTimeBin = 1:nTimeBins
+        for iUnit = 1:nUnits
+
+            currLearnedTuning = currLTs(sortedUnitIdx(iUnit), :, iTimeBin);
+            currLearnedTuning(isnan(currLearnedTuning)) = 0;
+
+            assemblyTunings_time{iSess}.(currEpoch)(iUnit, :, iTimeBin) = currLearnedTuning/max(currLearnedTuning);
+        end
+    end   
+end
+
+assemblyTunings_time{iSess}.post = assemblyTunings_time{iSess}.post(:, :, idx); % if we need to truncate the post data to the first couple of hours
+
+
+
+
+% calculate surrogate LTs' PF fidelity scores
+
+% nShuffles = nUnits-1;
+nShuffles      = 10000;
+
+for iEpoch = 1:3
+    currEpoch = epochNames{iEpoch};
+   
+    currLTs = assemblyTunings_time{iSess}.(currEpoch);
+    currPFs = spatialTunings{iSess};
+
+    curr_nTimeBins = size(currLTs, 3);
+    
+    
+    PFcorrs_prctileScore = nan(nUnits, curr_nTimeBins);
+    
+    for iTimeBin = 1:curr_nTimeBins
+       
+        currTimeBinLTs  = currLTs(:, :, iTimeBin);
+        
+        % In shuffle matching score keep the spatial tunings the same
+        % as in real data
+
+        allCorrs  = corr(currTimeBinLTs', currPFs', 'type', 'Pearson');
+
+        shuffle_PFcorr = nan(nUnits, nShuffles);
+        
+        for i_s = 1:nShuffles    
+            cidx = randi(nUnits, nUnits, 1);
+            shuffle_PFcorr(:, i_s) = allCorrs(sub2ind(size(allCorrs), (1:nUnits)', cidx));
+        end
+
+        median_shufflePFcorrs = prctile(shuffle_PFcorr, 50);
+
+        PFcorrs_prctileScore(:, iTimeBin) = (diag(allCorrs) - mean(median_shufflePFcorrs)); 
+         
+    end  
+    
+    assemblyTuningPFcorr_time_prctileScore{iSess}.(currEpoch)  = PFcorrs_prctileScore;
+    
+end
+
+
+end
+
+
+% cnctSpatialTunings = cell2mat(spatialTunings);
+% [~, PFpeakLocs]    = max(cnctSpatialTunings, [], 2);
+% [~, sortIdx]       = sort(PFpeakLocs, 'ascend');
+% 
+% cnctSpatialTunings_1 = cnctSpatialTunings(sortIdx, :);
+
+
+%% pooling the data acroos all sessions
+
+
+nPosBins = numel(spikes(1).spatialTuning_smoothed.uni);
+
+unifiedBinsCenters = cell(3,1);
+
+currStart = 0;
+for iEpoch = 1:3
+
+    currEpoch = epochNames{iEpoch};
+    
+    allNBins = nan(nSessions, 1);
+    for iSess = 1:nSessions    
+        allNBins(iSess) = numel(binCenters{iSess}.(currEpoch));
+    end
+    
+    [maxNBins, sessIdx] = max(allNBins);
+
+%     if iEpoch == 2
+%         maxNBins = 10;
+%     end
+
+    
+    unifiedBinsCenters{iEpoch} = currStart + (1:maxNBins)*0.0833 - 0.04165;
+    currStart = unifiedBinsCenters{iEpoch}(end); 
+    
+    
+
+    % concatenating LTs and the corresponding PF fidelity scores across all epochs
+    
+    PFcorrelation.(currEpoch) = cell(nSessions, 1);
+    
+    for iSess = 1:nSessions
+        
+        [nUnits, nPosBins, ~] = size(assemblyTunings_time{iSess}.(currEpoch));
+        
+        learnedTunings.(currEpoch){iSess}  = nan(nUnits, nPosBins, maxNBins);
+        PFcorrelation.(currEpoch){iSess}   = nan(nUnits, maxNBins);
+
+        switch iEpoch
+
+            case 1 % pre
+
+                learnedTunings.(currEpoch){iSess}(:, :, end-allNBins(iSess)+1:maxNBins)  = assemblyTunings_time{iSess}.(currEpoch);
+                PFcorrelation.(currEpoch){iSess}(:, end-allNBins(iSess)+1:maxNBins)      = assemblyTuningPFcorr_time_prctileScore{iSess}.(currEpoch);
+            
+            case 2 % mazej
+
+                learnedTunings.(currEpoch){iSess}(:, :, 1:allNBins(iSess))               = assemblyTunings_time{iSess}.(currEpoch);
+                PFcorrelation.(currEpoch){iSess}(:, 1:allNBins(iSess))                   = assemblyTuningPFcorr_time_prctileScore{iSess}.(currEpoch);
+%                     learnedTunings.(currEpoch){iSess}(:, :, 1:min(maxNBins, allNBins(iSess)))   = assemblyTunings_time{iSess}.(currEpoch)(:, :, 1:min(maxNBins, allNBins(iSess)));
+%                     PFcorrelation.(currEpoch){iSess}(:, 1:min(maxNBins, allNBins(iSess)))       = assemblyTuningPFcorr_time_prctileScore{iSess}.(currEpoch)(:, 1:min(maxNBins, allNBins(iSess)));
+    
+
+            
+            case 3 % post
+
+                learnedTunings.(currEpoch){iSess}(:, :, 1:allNBins(iSess))               = assemblyTunings_time{iSess}.(currEpoch);
+                PFcorrelation.(currEpoch){iSess}(:, 1:allNBins(iSess))                   = assemblyTuningPFcorr_time_prctileScore{iSess}.(currEpoch);
+
+        end
+
+    end
+    
+end
+
+%%%%%%%%%%%%%
+
+%% calculate a cross-correlation matrix for the 15minues time window learned tunings
+% removed the part related to KL divergence
+
+nShuffles = 1000;
+
+epochNTimeBins = nan(3,1);
+for iEpoch = 1:3
+    epochNTimeBins(iEpoch) = numel(unifiedBinsCenters{iEpoch});
+end
+totNTimeBins = sum(epochNTimeBins);
+
+
+epochStartBins = nan(3,1);
+epochStartBins(1) = 1;
+for iEpoch = 2:3
+    epochStartBins(iEpoch) = epochStartBins(iEpoch-1)+ epochNTimeBins(iEpoch-1);
+end
+
+
+for iSess = 1:nSessions
+    iSess
+
+[nUnits, nPosBins, ~] = size(learnedTunings.post{iSess});
+
+epochsXCorr{iSess}.data   = nan(nTimeBins, nTimeBins, nUnits);
+epochsXCorr{iSess}.ui     = nan(nTimeBins, nTimeBins, nShuffles);
+epochsXCorr_zscore{iSess} = nan(nTimeBins, nTimeBins, nUnits); 
+   
+for iEpoch = 1:3
+    
+    currData1 = learnedTunings.(epochNames{iEpoch}){iSess};
+
+    for jEpoch = 1:3
+
+        currData2 = learnedTunings.(epochNames{jEpoch}){iSess};
+
+        for iUnit = 1:nUnits
+            
+            % the real tunings
+            tuning1 = squeeze(currData1(iUnit, :, :));
+            tuning2 = squeeze(currData2(iUnit, :, :));
+
+            
+            % calculate the matching scores: pearson correlation and KL
+            % divergence
+            corrMat = corr(tuning1, tuning2, 'type', 'pearson');
+            
+%             if jEpoch == iEpoch
+%                 
+%                 offDiagonalIdx = true(size(corrMat));
+%                 for ii = 1:size(corrMat, 1)
+%                     offDiagonalIdx(ii, ii) = false;
+%                 end
+%                 corrMat = corrMat(offDiagonalIdx);
+%             end
+            
+            epochsXCorr{iSess}.data(epochStartBins(iEpoch)+(0:numel(unifiedBinsCenters{iEpoch})-1), epochStartBins(jEpoch)+(0:numel(unifiedBinsCenters{jEpoch})-1), iUnit) = corrMat;
+
+        end
+        
+        
+        % % shuffle 
+        for inst = 1:nShuffles
+
+            % generate shuffle tunings
+            nTimeBins1 = size(currData1, 3);
+            tuning1    = zeros(nPosBins, nTimeBins1);
+            for iTimeBin = 1:nTimeBins1
+                tuning1(:, iTimeBin) = squeeze(currData1(randperm(nUnits, 1), :, iTimeBin));
+            end
+            
+
+            nTimeBins2 = size(currData2, 3);
+            tuning2 = zeros(nPosBins, nTimeBins2);
+            for iTimeBin = 1:nTimeBins2 
+                tuning2(:, iTimeBin) = squeeze(currData2(randperm(nUnits, 1), :, iTimeBin));
+            end
+
+
+            % calculate the matching scores
+            corrMat = corr(tuning1, tuning2, 'type', 'pearson');
+
+%             if jEpoch == iEpoch
+%                 offDiagonalIdx = true(size(corrMat));
+%                 for ii = 1:size(corrMat, 1)
+%                     offDiagonalIdx(ii, ii) = false;
+%                 end
+%                 corrMat = corrMat(offDiagonalIdx);
+%             end
+
+            epochsXCorr{iSess}.ui(epochStartBins(iEpoch)+(0:numel(unifiedBinsCenters{iEpoch})-1), epochStartBins(jEpoch)+(0:numel(unifiedBinsCenters{jEpoch})-1), inst) = corrMat;
+
+        end
+    end    
+end
+
+epochsXCorr_zscore{iSess} = ((epochsXCorr{iSess}.data) - nanmean(epochsXCorr{iSess}.ui, 3)) ./ nanstd(epochsXCorr{iSess}.ui, [], 3);
+
+end
+
+
+
+
+%%%%%%%%%%%%%
+
+
+stabilityCorrMat_pooled = cat(3, epochsXCorr_zscore{:});
+
+temp = nanmean(stabilityCorrMat_pooled, 1);
+temp = nanmean(temp, 2);
+
+stabilityCorrMat_pooled2 = stabilityCorrMat_pooled - repmat(temp, [size(stabilityCorrMat_pooled, 1) size(stabilityCorrMat_pooled, 2) 1]);
+
+meanCorrMat = nanmean(stabilityCorrMat_pooled, 3);
+
+%%
+f = figure;
+
+plotwidth  = 80;
+plotheight = 80;
+
+clf(f)
+set(gcf, 'PaperUnits', 'points');
+set(gcf, 'PaperSize', [plotwidth plotheight]);
+set(gcf, 'PaperPositionMode', 'manual');
+set(gcf, 'PaperPosition', [0 0 plotwidth plotheight]);
+
+hold on
+
+for iEpoch = 1:3
+    for jEpoch = 1:3
+        currData = meanCorrMat(epochStartBins(iEpoch)+(0:epochNTimeBins(iEpoch)-1), epochStartBins(jEpoch)+(0:epochNTimeBins(jEpoch)-1));
+
+        h = imagesc(unifiedBinsCenters{jEpoch}, unifiedBinsCenters{iEpoch}, currData);
+        set(h,'alphadata',~isnan(currData)) 
+    end
+end
+colormap('jet')
+caxis([-1 1])
+xlim([-0.2 16.5])
+ylim([-0.2 16.5])
+axis square
+
+set(gca,'color', 'white') 
+
+set(gca, 'xtick', [0:2:18], 'ytick', [0:2:18], 'fontsize', 5)
+set(gca, 'box', 'off', 'linewidth', 1, 'XTickLabels', '', 'YTickLabels', '', 'TickDir', 'out','TickLength',[0.01, 0.01] ) % ,  'YTick', [0 25 50 75 100]
+
+
+%% plot the distribution of mean cross-correlation for three 3 hours epochs in POST
+
+epochStartTimes = [0 5.1646 8.038];
+
+% remove overlapping time points
+
+binCenters_noOverlap = cell(3,1);
+for iEpoch = 1:3
+    binCenters_noOverlap{iEpoch} = unifiedBinsCenters{iEpoch}(1:3:end);
+end
+
+allTimeBins = cell2mat(binCenters_noOverlap');
+
+for iSess = 1:nSessions
+    currData = epochsXCorr{iSess}.data;
+    currData = currData(1:3:end, 1:3:end, :);
+
+    for iUnit = 1:size(currData, 3)
+        currData(:,:, iUnit) = currData(:,:, iUnit) - diag(diag(currData(:,:, iUnit))) + diag(nan(size(currData, 1), 1));
+    end
+    
+
+    currShuffle = epochsXCorr{iSess}.ui(1:3:end, 1:3:end, :);
+    for inst = 1:size(currShuffle, 3)
+        currShuffle(:,:, inst) = currShuffle(:,:, inst) - diag(diag(currShuffle(:,:, inst))) + diag(nan(size(currShuffle, 1), 1));
+    end
+
+
+    % PRE
+    % whole period together
+    
+    idx = find(allTimeBins > epochStartTimes(1) & allTimeBins < epochStartTimes(2));
+    
+    currMeanData    = nanmean(reshape(currData(idx, idx, :), [numel(idx)^2 size(currData, 3)]));
+    currMeanShuffle = nanmean(reshape(currShuffle(idx, idx, :), [numel(idx)^2 size(currShuffle, 3)]));
+
+    zscored_stability_time.pre{iSess} = (currMeanData - nanmean(currMeanShuffle)) ./ nanstd(currMeanShuffle);
+
+
+    % MAZE
+    % skip for now
+    
+
+    % POST
+    % 3 hours windows
+    
+    startTimes = epochStartTimes(3)+(0:10);
+    endTimes   = startTimes + 2;
+    nWins      = numel(startTimes);
+
+    zscored_stability_time.post{iSess} = nan(size(currData, 3), nWins);
+
+    for iWin = 1:numel(startTimes)
+
+%         idx = find(allTimeBins > epochStartTimes(3)+(iWin-1)*3 & allTimeBins < epochStartTimes(3)+iWin*3);
+        idx = find(allTimeBins > startTimes(iWin) & allTimeBins < endTimes(iWin));
+        idx = idx(1:end-1);
+%         numel(idx)
+        
+%         temp = nanmean(currData(idx, idx, :), 3);
+
+        currMeanData    = nanmean(reshape(currData(idx, idx, :), [numel(idx)^2 size(currData, 3)]));
+        currMeanShuffle = nanmean(reshape(currShuffle(idx, idx, :), [numel(idx)^2 size(currShuffle, 3)]));
+    
+        zscored_stability_time.post{iSess}(:, iWin) = (currMeanData - nanmean(currMeanShuffle)) ./ nanstd(currMeanShuffle);
+    end
+
+end
+
+
+
+
+%%
+
+
+
+PFcorrelation_pooled  = cell(3,1);
+
+for iEpoch = 1:3
+    
+    currEpoch = epochNames{iEpoch};
+    
+    PFcorrelation_pooled{iEpoch}  = cell2mat(PFcorrelation.(currEpoch));
+
+end
+
+
+
+
+%%
+
+plotwidth  = 80;
+plotheight = 60;
+fontsize   = 5;
+
+currSessions = [1:5];
+
+f= figure;
+clf(f);
+set(gcf, 'PaperUnits', 'points');
+set(gcf, 'PaperSize', [plotwidth plotheight]);
+set(gcf, 'PaperPositionMode', 'manual');
+set(gcf, 'PaperPosition', [0 0 plotwidth plotheight]);
+
+
+POST_longStability_pooled = cell2mat(zscored_stability_time.post(currSessions)');
+PRE_longStability_pooled  = cell2mat(zscored_stability_time.pre(currSessions))';
+
+h = violinplot([PRE_longStability_pooled POST_longStability_pooled]);
+
+for ii = 1:numel(h)
+
+    h(ii).ViolinColor = [0 0 0];
+    h(ii).ViolinAlpha = 0.7;
+    h(ii).EdgeColor   = 'none';
+    h(ii).ShowData    = 0;
+    h(ii).MedianPlot.SizeData = 2.5;
+%         h(ii).MedianPlot.Marker = 'square';
+    h(ii).MedianPlot.MarkerEdgeColor = 'none';
+    h(ii).MedianPlot.MarkerFaceColor = [1 1 1];
+    h(ii).WhiskerPlot.LineWidth = 1;
+    h(ii).WhiskerPlot.Color = [1 1 1];
+
+end
+
+set(gca, 'box', 'off', 'linewidth', 1, 'YTick', 0:10:40, 'fontsize', fontsize, 'TickDir', 'out','TickLength',[0.01, 0.01] ) % ,  'YTick', [0 25 50 75 100]
+
+aa = gca;
+aa.YGrid = 'on';
+
+xlim([0 11])
+ylim([-10 25])
+%% statistical tests
+
+
+
+[p_value, ~, stats] = signrank(POST_longStability_pooled(:,1), POST_longStability_pooled(:,2));
+z_value = stats.zval;
+
+
+
+%% LT-PF correlation
+
+
+plotwidth  = 380;
+plotheight = 265;
+fontsize   = 6;
+
+
+f= figure;
+clf(f);
+set(gcf, 'PaperUnits', 'points');
+set(gcf, 'PaperSize', [plotwidth plotheight]);
+set(gcf, 'PaperPositionMode', 'manual');
+set(gcf, 'PaperPosition', [0 0 plotwidth plotheight]);
+
+
+nor = 2;
+noc = 1;
+
+
+leftmargin = 50;  rightmargin = 30;    topmargin = 60;    bottommargin = 60;
+
+gapc = 5;
+gapr = 15;
+
+sub_pos = subplot_pos(plotwidth, plotheight, leftmargin, rightmargin, bottommargin, topmargin, noc, nor, gapr, gapc);
+
+
+
+
+% cl = [[0, 0.4470, 0.7410]; [0.8500, 0.3250, 0.0980]; [0.75, 0.75, 0]];
+
+% cl = [[0, 0.4470, 0.7410]; [0.8500, 0.3250, 0.0980]; [0.75, 0.75, 0]; [0.4940, 0.1840, 0.5560]; [0, 0.5, 0]];
+
+
+% cl = nan(nSessions, 3);
+ax(1) = axes('position',sub_pos{1},'XGrid','off','XMinorGrid','off','FontSize',6,'Box','off','Layer','top');
+
+
+hold on
+for iEpoch = 1:3
+    
+    currEpoch = epochNames{iEpoch};
+    
+    currData = PFcorrelation_pooled{iEpoch};
+    
+    x = unifiedBinsCenters{iEpoch};
+    
+    if iEpoch == 2
+%         currData = currData(:, 1:end-2);
+%         x = x(1:end-2);
+    end
+
+    
+    lq = nanprctile(currData, 25);
+    hq = nanprctile(currData, 75);
+    
+    
+    patch([x fliplr(x)], [lq' fliplr(hq')], 'k', 'FaceAlpha', 0.2, 'EdgeColor', 'none')
+        
+    
+    for iSess = 1:nSessions
+        
+        sessionData = PFcorrelation.(currEpoch){iSess};
+        if iEpoch == 2
+%             sessionData = sessionData(:, 1:end-2);
+        end
+        h(iSess) = plot(x, nanmedian(sessionData), 'linewidth', 0.5); colormap('jet') ; %, 'color', [cl(iSess, :) 0.6]
+        
+        if iEpoch == 1
+%             oldColor = h(iSess).Color;
+%             h(iSess).Color = [oldColor 0.5];
+    
+%             cl(iSess, :) = h(iSess).Color;
+%             cl(iSess, :) = rand(1,3);
+            h(iSess).Color = [cl(iSess, :) 0.5];
+
+        else
+            h(iSess).Color = [cl(iSess, :) 0.5];
+        end
+    end
+    
+    plot(x, nanmedian(currData), 'color', 'k', 'linewidth', 1); colormap('jet')
+
+
+%     yl = ylim;
+%     PoVtimeBins = exampleBinCenters{iEpoch};
+%     for ib = 1:numel(PoVtimeBins)
+%         line([PoVtimeBins(ib) PoVtimeBins(ib)], yl, 'linewidth', 1, 'linestyle', ':', 'color', [0.3 0.3 0.3])
+%     end
+
+    
+end
+
+% legend(h, 'RatN', 'RatS', 'RatU', 'RatV_Day1', 'RatV_Day2', 'box', 'off', 'location', 'northout')
+
+% legend(h, 'Achilles-maze1', 'Achilles-maze2', 'Buddy', 'Cicero', 'Gatsby', 'box', 'off', 'location', 'northout')
+% legend(h, 'Roy-Day1', 'Ted-Maze1', 'Ted-Maze2', 'Ted-Maze3', 'Kevin', 'box', 'off', 'location', 'northout')
+% legend(h, 'Roy-Day1', 'Roy-Day2', 'Roy-Day3', 'Ted-Maze3', 'Kevin', 'box', 'off', 'location', 'northout')
+
+ylabel({'ripple LT fidelity'; '(baseline subtracted)'}, 'fontsize', fontsize)
+
+xlim([0 17])
+
+xl = xlim;
+
+
+set(gca, 'position', sub_pos{1},'box', 'off', 'linewidth', 1, 'XTick', 0:2:xl(2), 'XTickLabels', '', 'fontsize', fontsize, 'TickDir', 'out','TickLength',[0.01, 0.01] ) % ,  'YTick', [0 25 50 75 100]
+
+xticklabels([])
+
+
+axis tight
+currAx = gca;
+currAx.YGrid = 'on';
+
+
+
+
+
+
+% 
+% % LT-PF KL divergence
+% 
+% ax(2) = axes('position',sub_pos{2},'XGrid','off','XMinorGrid','off','FontSize', 6,'Box','off','Layer','top');
+% 
+% 
+% hold on
+% for iEpoch = 1:3
+%     
+%     currEpoch = epochNames{iEpoch};
+%     
+%     currData = KLdiv_pooled{iEpoch};
+%     
+%     x = unifiedBinsCenters{iEpoch};
+%     
+%     if iEpoch == 2
+% %         currData = currData(:, 1:end-2);
+% %         x = x(1:end-2);
+%     end
+% 
+%     
+%     lq = nanprctile(currData, 25);
+%     hq = nanprctile(currData, 75);
+%      
+%     
+%     patch([x fliplr(x)], [lq' fliplr(hq')], 'k', 'FaceAlpha', 0.2, 'EdgeColor', 'none')
+%     
+%     for iSess = 1:nSessions
+%         
+%         sessionData = KLdiv.(currEpoch){iSess};
+%         if iEpoch == 2
+% %             sessionData = sessionData(:, 1:end-2);
+%         end
+%         
+%         plot(x, nanmedian(sessionData), 'color', [cl(iSess, :) 0.6], 'linewidth', 0.5); colormap('jet');
+%     end
+%     
+%     
+%     plot(x, nanmedian(currData), 'color', 'k', 'linewidth', 1); colormap('jet')
+% 
+% end
+% 
+% 
+% xlabel('time (hour)', 'fontsize', fontsize)
+% ylabel({'LT-PF'; 'KL divergence %'}, 'fontsize', fontsize)
+% 
+% 
+% set(gca, 'box', 'off', 'linewidth', 1, 'YTick', [0 25 50 75 100], 'fontsize', fontsize, 'TickDir', 'out','TickLength',[0.01, 0.01] ) 
+% 
+% currAx = gca;
+% currAx.YGrid = 'on';
+% 
+% 
+% linkaxes(ax, 'xy')
+% 
+% axis tight
+% 
+% 
+% % ylim([0 100])
+% 
+% % xlim([0 9.6])
+% xlim([0 12])
+
+
+
+%% plot the spatial PoV correlation in a couple of points
+
+
+plotheight = 100;
+plotwidth  = 500;
+fontsize   = 6;
+
+nor = 1;
+noc = 3;
+
+leftmargin = 25;  rightmargin = 25;    topmargin = 25;    bottommargin = 45;
+
+gapc = 10;
+gapr = 0;
+
+sub_pos = subplot_pos(plotwidth, plotheight, leftmargin, rightmargin, bottommargin, topmargin, noc, nor, gapr, gapc);
+
+
+
+% for each epoch
+
+plotwidth_epoch = (plotwidth - (rightmargin+leftmargin) - (noc-1) * gapc)/noc;
+plotheight_epoch = (plotheight - (topmargin+bottommargin) - (nor-1) * gapr)/nor;
+
+nor_epoch = 1;
+noc_epoch = 5;
+
+leftmargin_epoch = 0;  rightmargin_epoch = 0;     bottommargin_epoch = 0;    topmargin_epoch = 0;
+gapr_epoch = 0;    gapc_epoch = 3;
+
+
+f= figure;
+clf(f);
+set(gcf, 'PaperUnits', 'points');
+set(gcf, 'PaperSize', [plotwidth plotheight]);
+set(gcf, 'PaperPositionMode', 'manual');
+set(gcf, 'PaperPosition', [0 0 plotwidth plotheight]);
+
+
+exampleBinCenters = cell(3, 1);
+
+nEpochs = 1;
+
+for iEpoch = 1:3
+    
+    currEpoch = epochNames{iEpoch};
+    
+    sub_pos_epoch = subplot_pos(plotwidth_epoch, plotheight_epoch, leftmargin_epoch, rightmargin_epoch, bottommargin_epoch, topmargin_epoch, noc_epoch, nor_epoch, gapr_epoch, gapc_epoch); %% this gives us the positions for the subplots, each corresponded to an event
+
+    for ii = 1 : nor_epoch
+        for jj = 1 : noc_epoch
+
+            sub_pos_epoch{ii,jj}(1) = (sub_pos_epoch{ii,jj}(1) * plotwidth_epoch + sub_pos{nEpochs}(1) * plotwidth) / plotwidth;
+            sub_pos_epoch{ii,jj}(2) = (sub_pos_epoch{ii,jj}(2) * plotheight_epoch + sub_pos{nEpochs}(2) * plotheight) / plotheight;
+            sub_pos_epoch{ii,jj}(3) = sub_pos_epoch{ii,jj}(3) * plotwidth_epoch / plotwidth;
+            sub_pos_epoch{ii,jj}(4) = sub_pos_epoch{ii,jj}(4) * plotheight_epoch / plotheight;
+        end
+    end
+    
+    
+    nTimeBins  = size(learnedTunings_pooled{iEpoch}, 3);
+
+
+    switch iEpoch
+        case 1
+            nExampleTimeBins = 3;
+            nTimeBins = 28;
+        case 2
+            nExampleTimeBins = 2;
+            nTimeBins = 6;
+        case 3
+            nExampleTimeBins = 5;
+            nTimeBins = 100;
+    end
+    
+    selectedTimeBins  = ceil(linspace(3, nTimeBins, nExampleTimeBins));
+    exampleBinCenters{iEpoch} = unifiedBinsCenters{iEpoch}(selectedTimeBins);
+
+    nTB = 1;
+    for itb = 1:numel(selectedTimeBins)
+
+        ax1 = axes('position',sub_pos_epoch{nTB},'XGrid','off','XMinorGrid','off','FontSize',6,'Box','off','Layer','top');
+        
+        currLTs = learnedTunings_pooled{iEpoch}(:, :, selectedTimeBins(itb));
+        currLTs(isnan(currLTs)) = 0;
+        
+        inclusionIdx = sum(currLTs, 2) ~= 0;
+        
+        corrMat = corr(cnctSpatialTunings_1(inclusionIdx, :), currLTs(inclusionIdx, :));
+        
+        imagesc(corrMat)
+        caxis([0 0.35])
+        
+        colormap('jet')
+        xlim([0 nPosBins_interp])
+        ylim([0 nPosBins_interp])
+
+
+        set(ax1, 'xTick', [0 nPosBins_interp], 'xTickLabel', {'0'; '1'}, 'yTick', [0 nPosBins_interp], ...
+            'YTickLabel', {'0'; '1'}, 'YDir', 'normal', 'box', 'off', 'TickDir', 'out','TickLength',[0.05, 0.05], 'fontsize', fontsize, 'linewidth', 1, 'position', sub_pos_epoch{nTB})
+        axis square
+        
+        nTB = nTB+1;
+    end
+
+    nEpochs = nEpochs+1;
+
+end
+
+
+
+
+%% sub-functions
+
+
+function prct = nanprctile(data, percentile)
+
+
+nTimeBins = size(data, 2);
+prct = nan(nTimeBins, 1);
+
+for iTimeBin = 1:nTimeBins
+    
+    currData = data(:, iTimeBin);
+    
+    currData = currData(~isnan(currData));
+    prct(iTimeBin) = prctile(currData, percentile);
+
+end
+
+end
+
+
+function KLdiv = calKLDivergence(learnedTunings, spatialTunings)
+
+
+% the units should be in columns of learned tunings or spatialTunings
+% matrix
+% 
+% if size(spatialTunings, 2) > size(spatialTunings, 1)
+%     spatialTunings = spatialTunings';
+% end
+
+spatialTunings = spatialTunings ./ repmat(sum(spatialTunings, 1), [size(spatialTunings, 1) 1]);
+spatialTunings = spatialTunings + eps;
+
+[~, nUnits] = size(spatialTunings);
+
+% if size(learnedTunings, 1) ~= nPosBins
+%     learnedTunings = learnedTunings';
+% end
+
+learnedTunings = learnedTunings ./ repmat(sum(learnedTunings, 1), [size(learnedTunings, 1) 1]);
+learnedTunings = learnedTunings + eps;
+
+
+KLdiv = nan(nUnits);
+
+for iUnit = 1:nUnits
+    currSpatialTuning = spatialTunings(:, iUnit);
+    
+    spatialTuningTerm = repmat(currSpatialTuning, [1 nUnits]);
+    KLdiv(:, iUnit) = sum(spatialTuningTerm .* (log(spatialTuningTerm) - log(learnedTunings)), 1);
+end
+
+end

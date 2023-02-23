@@ -1,0 +1,552 @@
+
+clearvars -except aa
+clc
+% close all
+
+
+parentDir = '/home/kouroshmaboudi/Documents/NCMLproject/assemblyTuning_finalResults/';
+
+rr = dir(parentDir);
+
+
+currSessions = [1:5 7:9 12 15:17 6]; %  7:9 10 13:15 6
+nSessions    = numel(currSessions);
+
+epochNames = {'pre'; 'run'; 'post'};
+dataTypes  = {'data'; 'ui'};
+
+
+
+activeUnits = cell(nSessions, 1);
+nUnits      = nan(nSessions, 1);
+
+spatialTuning = cell(nSessions, 1);
+
+learnedTuning_sub = cell(nSessions, 1);
+
+
+learnedTuningPFcorr  = cell(nSessions, 1);
+learnedTuningPFKLdiv = cell(nSessions, 1);
+learnedTuningPFposDist = cell(nSessions, 1);
+
+gw = gausswindow(3,9);
+flag = 1;
+
+
+for iSess = 1:nSessions
+    
+sessionNumber = currSessions(iSess);
+sessionName   = rr(sessionNumber+2).name
+basePath      = fullfile(parentDir, sessionName);
+    
+
+load(fullfile(parentDir, sessionName, 'spikes', [sessionName '.spikes.mat']), 'spikes_pyr')
+spikes = spikes_pyr;
+
+
+% % maybe for now going ahead with the active units that were calcualted
+% for the PBEs
+
+s = load(fullfile(basePath, 'assemblyTunings', [sessionName '.assemblyTunings_allPBEs_Lthresh1e_3.mat']), 'activeUnits');
+
+activeUnits{iSess} = s.activeUnits;
+okUnits = intersect(activeUnits{iSess}.pre, activeUnits{iSess}.post);
+% okUnits = intersect(okUnits, activeUnits{iSess}.run);
+nUnits(iSess) = numel(okUnits);
+
+
+% nUnits(iSess) = numel(spikes);
+% okUnits = 1:nUnits(iSess);
+
+
+% % learned tunings and PF-matching scores
+
+s = load(fullfile(basePath, 'assemblyTunings', [sessionName '.assemblyTunings_REMcontamineatedWithPBEs_0.020.mat']), ... 
+    'assemblyTunings', ...
+    'assemblyTuning_prefPos', 'assemblyTuningPF_prefPosDist', ...
+    'assemblyTuningPFcorr', 'assemblyTuningPFKLdiv', ...
+    'assemblyTuningPF_prefPosDist_pscore', 'assemblyTuningPFcorr_pscore', 'assemblyTuningPFKLdiv_pscore');
+
+
+spikes = spikes(okUnits);
+
+
+% track spatial tunings
+nPosBins = numel(spikes(1).spatialTuning_smoothed.uni);
+
+interpPosBins   = linspace(0, nPosBins, 200);
+nPosBins_interp = numel(interpPosBins);
+
+
+% non-directional spatial tuning
+spatialTunings_merge = zeros(nUnits(iSess), nPosBins_interp);
+
+peakPFlocation = zeros(nUnits(iSess), 1);
+peakPFfiring   = zeros(nUnits(iSess), 1);
+
+
+for iUnit = 1:nUnits(iSess)
+
+    currSpatialTuning = spikes(iUnit).spatialTuning_smoothed.uni;
+    currSpatialTuning = interp1(1:nPosBins, currSpatialTuning, interpPosBins);
+    currSpatialTuning = currSpatialTuning./max(currSpatialTuning);
+
+    spatialTunings_merge(iUnit, :) = currSpatialTuning;
+    [peakPFfiring(iUnit), peakPFlocation(iUnit)] = max(currSpatialTuning);
+
+end
+
+[~, sortIdx] = sort(peakPFlocation, 'ascend');
+sortedUnitIdx = okUnits(sortIdx);
+% peakPFlocation_session{iSess} = peakPFlocation(sortIdx);
+
+
+
+temp = nanmean(spatialTunings_merge, 1);
+if flag == 1
+    startBin = find(~isnan(temp), 1, 'first');
+    endBin   = find(~isnan(temp), 1, 'last');
+    flag = 0;
+end
+
+spatialTuning{iSess} = spatialTunings_merge(sortIdx, startBin:endBin);
+
+nPosBins_interp = endBin - startBin + 1;
+    
+        
+for iEpoch = [1 3]
+    currEpoch = epochNames{iEpoch};
+
+    % assembly Tunings
+    learnedTuning_sub{iSess}.(currEpoch) = nan(nUnits(iSess), nPosBins_interp);
+
+    for iUnit = 1:nUnits(iSess)
+
+        currLearnedTuning = s.assemblyTunings.(currEpoch).data(sortedUnitIdx(iUnit), :);
+        currLearnedTuning = interp1(1:nPosBins, currLearnedTuning, interpPosBins);
+        currLearnedTuning(isnan(currLearnedTuning)) = 0;
+        currLearnedTuning = conv(currLearnedTuning, gw, 'same');
+        currLearnedTuning = currLearnedTuning(startBin:endBin);
+
+        learnedTuning_sub{iSess}.(currEpoch)(iUnit, :) = currLearnedTuning/max(currLearnedTuning);
+    end
+    
+    
+    
+    for idata = 1%:2
+        currDataType = dataTypes{idata};
+    
+        learnedTuningPFcorr{iSess}.(currEpoch).(currDataType)  = s.assemblyTuningPFcorr.(currEpoch).(currDataType)(sortedUnitIdx, :);
+%         learnedTuningPFKLdiv{iSess}.(currEpoch).(currDataType)  = s.assemblyTuningPFKLdiv.(currEpoch).(currDataType)(sortedUnitIdx, :); 
+        learnedTuningPFposDist{iSess}.(currEpoch).(currDataType)  = s.assemblyTuningPF_prefPosDist.(currEpoch).(currDataType)(sortedUnitIdx, :);
+
+    end
+    
+end
+
+end
+
+
+%% plot the learning tunings for different quartiles of replay score
+
+plotheight = 200;
+plotwidth  = 150;
+% fontsize   = 8;
+
+
+nor = 1;
+noc = 3;
+
+leftmargin = 25;  rightmargin = 25;    topmargin = 25;    bottommargin = 25;
+
+gapc = 10;
+gapr = 0;
+
+sub_pos = subplot_pos(plotwidth, plotheight, leftmargin, rightmargin, bottommargin, topmargin, noc, nor, gapr, gapc);
+
+
+f= figure;
+clf(f);
+set(gcf, 'PaperUnits', 'points');
+set(gcf, 'PaperSize', [plotwidth plotheight]);
+set(gcf, 'PaperPositionMode', 'manual');
+set(gcf, 'PaperPosition', [0 0 plotwidth plotheight]);
+
+
+
+% for each epoch
+
+plotwidth_epoch = (plotwidth - (rightmargin+leftmargin) - (noc-1) * gapc)/noc;
+plotheight_epoch = (plotheight - (topmargin+bottommargin) - (nor-1) * gapr)/nor;
+
+nor_epoch = 1;
+noc_epoch = 1;
+
+leftmargin_epoch = 0;  rightmargin_epoch = 0;     bottommargin_epoch = 0;    topmargin_epoch = 0;
+gapr_epoch = 0;    gapc_epoch = 3;
+
+
+
+cnctSpatialTunings = cell2mat(spatialTuning);
+[~, PFpeakLocs] = max(cnctSpatialTunings, [], 2);
+[~, sortIdx]  = sort(PFpeakLocs, 'ascend');
+
+
+ax1 = axes('position',sub_pos{1},'XGrid','off','XMinorGrid','off','FontSize',6,'Box','off','Layer','top');
+
+cnctSpatialTunings_1 = cnctSpatialTunings(sortIdx, :);
+imagesc(cnctSpatialTunings_1)
+
+tn_units = size(cnctSpatialTunings_1, 1);
+
+colormap('jet')
+xlim([0 nPosBins_interp])
+ylim([0.5 tn_units+0.5])
+set(ax1, 'xTick', [0 nPosBins_interp], 'XTickLabel', {'0'; '1'}, 'yTick', [1 tn_units], 'YDir', 'normal', 'box', 'off', 'TickDir', 'out','TickLength',[0.01, 0.01], 'fontsize', 6)
+
+
+
+
+tt = 2;
+for iEpoch = [1 3]
+    
+    currEpoch = epochNames{iEpoch};
+    
+    currLearnedTunings_1 = cell(nSessions, 1);
+    for iSess = 1:nSessions      
+        currLearnedTunings_1{iSess} = learnedTuning_sub{iSess}.(currEpoch);
+    end
+    cnctLearnedTunings_1 = cell2mat(currLearnedTunings_1);
+    
+    % sorting again because we are concatentating multiple sessions that
+    % were sorted separately
+    
+
+    cnctLearnedTunings.(currEpoch) = cnctLearnedTunings_1(sortIdx, :, :);
+    cnctSpatialTunings_1 = cnctSpatialTunings(sortIdx, :);
+    
+    tn_units = size(cnctLearnedTunings.(currEpoch), 1);
+%     tn_units = 992-48+1;
+    
+    sub_pos_epoch = subplot_pos(plotwidth_epoch, plotheight_epoch, leftmargin_epoch, rightmargin_epoch, bottommargin_epoch, topmargin_epoch, noc_epoch, nor_epoch, gapr_epoch, gapc_epoch); %% this gives us the positions for the subplots, each corresponded to an event
+
+    for ii = 1 : nor_epoch
+        for jj = 1 : noc_epoch
+
+            sub_pos_epoch{ii,jj}(1) = (sub_pos_epoch{ii,jj}(1) * plotwidth_epoch + sub_pos{tt}(1) * plotwidth) / plotwidth;
+            sub_pos_epoch{ii,jj}(2) = (sub_pos_epoch{ii,jj}(2) * plotheight_epoch + sub_pos{tt}(2) * plotheight) / plotheight;
+            sub_pos_epoch{ii,jj}(3) = sub_pos_epoch{ii,jj}(3) * plotwidth_epoch / plotwidth;
+            sub_pos_epoch{ii,jj}(4) = sub_pos_epoch{ii,jj}(4) * plotheight_epoch / plotheight;
+        end
+    end
+    
+    
+    for ii=1%:2
+        
+        if ii == 1; iSub = 1;
+        elseif ii == 2; iSub = 4;
+        end
+        
+        ax1 = axes('position',sub_pos_epoch{ii},'XGrid','off','XMinorGrid','off','FontSize',6,'Box','off','Layer','top');
+
+        imagesc(cnctLearnedTunings.(currEpoch)) % (48:992,:)
+%         imagesc(cnctSpatialTunings_1)
+        
+        colormap('jet')
+        xlim([0 nPosBins_interp])
+        ylim([1 tn_units])
+        set(ax1, 'xTick', [0 nPosBins_interp], 'XTickLabel', {'0'; '1'}, 'yTick', [1 tn_units], 'YDir', 'normal', 'box', 'off', 'TickDir', 'out','TickLength',[0.01, 0.01])
+    end
+    
+    tt = tt+1;
+    
+end
+
+
+%% PF correlation and KL divergence
+
+
+for iEpoch = [1 3]
+    currEpoch = epochNames{iEpoch};
+    
+    for idata = 1%:2
+        currDataType = dataTypes{idata};
+    
+        PFcorr.(currEpoch).(currDataType) = cell(nSessions, 1);
+%         KLdiv.(currEpoch).(currDataType)  = cell(nSessions, 1);
+        posDist.(currEpoch).(currDataType)  = cell(nSessions, 1);
+        
+        for iSess = 1:nSessions
+
+            PFcorr.(currEpoch).(currDataType){iSess}  = learnedTuningPFcorr{iSess}.(currEpoch).(currDataType);
+%             KLdiv.(currEpoch).(currDataType){iSess}   = learnedTuningPFKLdiv{iSess}.(currEpoch).(currDataType);
+            posDist.(currEpoch).(currDataType){iSess} = learnedTuningPFposDist{iSess}.(currEpoch).(currDataType);
+
+        end
+        PFcorr.(currEpoch).(currDataType) = cell2mat(PFcorr.(currEpoch).(currDataType));
+%         KLdiv.(currEpoch).(currDataType)  = cell2mat(KLdiv.(currEpoch).(currDataType));
+        posDist.(currEpoch).(currDataType) = cell2mat(posDist.(currEpoch).(currDataType));
+    end
+end
+
+
+
+% plot the distribution of LT-PFcorrelation
+
+plotheight = 110;
+plotwidth  = 80;
+fontsize   = 6;
+
+f= figure;
+clf(f);
+set(gcf, 'PaperUnits', 'points');
+set(gcf, 'PaperSize', [plotwidth plotheight]);
+set(gcf, 'PaperPositionMode', 'manual');
+set(gcf, 'PaperPosition', [0 0 plotwidth plotheight]);
+
+customCDF(PFcorr)
+% customHistogram(PFcorr)
+
+% xlim([-1 1])
+% ylim([0 0.15])
+yl = ylim;
+
+set(gca, 'linewidth', 1, 'fontsize', fontsize, 'box', 'off', 'TickDir', 'out','TickLength',[0.01, 0.01])
+% set(gca, 'XTick', -1:0.5:1)
+% set(gca, 'YTick', 0:0.05:yl(2))
+
+set(gca, 'XTick', 0:50:100)
+
+
+xlabel({'LT-PF'; 'Pearson correlation coeff.'}, 'fontsize', fontsize)
+
+% xlabel({'LT-PF'; 'KL divergence'}, 'fontsize', fontsize)
+ylabel('fraction of units', 'fontsize', fontsize)
+
+% axis square
+
+
+%%
+
+cnctLearnedTunings.post(isnan(cnctLearnedTunings.post)) = 0; a.post = corr(cnctSpatialTunings_1, cnctLearnedTunings.post);
+cnctLearnedTunings.pre(isnan(cnctLearnedTunings.pre)) = 0; a.pre = corr(cnctSpatialTunings_1, cnctLearnedTunings.pre);
+
+
+plotheight = 100;
+plotwidth  = 150;
+fontsize   = 8;
+
+
+nor = 1;
+noc = 2;
+
+leftmargin = 25;  rightmargin = 25;    topmargin = 25;    bottommargin = 25;
+
+gapc = 10;
+gapr = 0;
+
+sub_pos = subplot_pos(plotwidth, plotheight, leftmargin, rightmargin, bottommargin, topmargin, noc, nor, gapr, gapc);
+
+
+f= figure;
+clf(f);
+set(gcf, 'PaperUnits', 'points');
+set(gcf, 'PaperSize', [plotwidth plotheight]);
+set(gcf, 'PaperPositionMode', 'manual');
+set(gcf, 'PaperPosition', [0 0 plotwidth plotheight]);
+
+
+ii = 1;
+for iEpoch = [1 3]
+    currEpoch = epochNames{iEpoch};
+
+    ax1 = axes('position',sub_pos{ii},'XGrid','off','XMinorGrid','off','FontSize',6,'Box','off','Layer','top');
+
+    imagesc(a.(currEpoch)) 
+
+    
+    colormap('jet')
+    xlim([0 nPosBins_interp])
+    ylim([0 nPosBins_interp])
+    set(ax1, 'xTick', [0 nPosBins_interp], 'yTick', [0 nPosBins_interp], 'YDir', 'normal', 'box', 'off', 'TickDir', 'out','TickLength',[0.01, 0.01], 'fontsize', fontsize)
+    
+    xlabel('learned Tuning p.v.', 'fontsize', fontsize)
+
+    if iEpoch == 1
+        ylabel('place field p.v.', 'fontsize', fontsize)
+    end
+    ii = ii +1;
+end
+
+
+
+%% sub-functions
+
+
+function customHistogram(variable)
+
+epochNames = {'pre'; 'run'; 'post'};
+
+if isfield(variable.pre, 'data') % in case we are plotting the absolute values and not z-scores
+    
+    for iEpoch = [1 3]
+        variable2.(epochNames{iEpoch}) = variable.(epochNames{iEpoch}).data;
+    end
+    
+    variable = variable2;
+    clear variabale2
+
+end 
+
+
+allValues = [variable.pre; variable.post];
+% allValues = allValues(allValues > prctile(allValues, 0.1) & allValues < prctile(allValues, 99.9));
+allValues(allValues > (nanmedian(allValues) + 2.5*(nanprctile(allValues, 75) - nanprctile(allValues, 25)))) = [];
+
+
+bins = linspace(min(allValues), max(allValues)+0.01, 20);
+
+% colors = {'b'; 'none';'r'};
+% edgeColors = {'none'; 'k'; 'none'};
+% medianColors = {'b'; 'k'; 'r'};
+
+colors = [[0 0 200]/255; [0 153 0]/255; [204 0 0]/255];
+
+hold on
+for iEpoch = [1 3]
+
+    currEpoch = epochNames{iEpoch};
+    pooledVar = variable.(currEpoch);     
+    
+    h = histc(pooledVar, bins); h(end) = [];
+    
+    plot(bins(1:end-1)+diff(bins(1:2))/2, h/sum(h), 'color', [colors(iEpoch, :) 0.5], 'linewidth', 1, 'displayName', epochNames{iEpoch})
+%     area([0 bins(1:end-1)]+diff(bins(1:2))/2, [0; h]/sum(h), 'FaceColor', colors(iEpoch, :), 'FaceAlpha', 0.2, 'EdgeColor', colors(iEpoch, :), 'linewidth', 0.5, 'EdgeAlpha', 0.6)
+    
+    a(iEpoch) = bar(bins(1:end-1)+diff(bins(1:2))/2, h/sum(h), 'Edgecolor', 'none', 'facecolor', colors(iEpoch, :), 'facealpha', 0.4);
+% %     hold on
+
+    medianCorr.(currEpoch) = nanmedian(pooledVar);
+
+end
+
+xlim([min(allValues), max(allValues)])
+
+rr = ylim;
+for iEpoch = [1 3]
+    currEpoch = epochNames{iEpoch};
+    line([medianCorr.(currEpoch) medianCorr.(currEpoch)], [0 rr(2)], 'color', [colors(iEpoch, :) 0.6], 'linewidth', 1)
+end
+
+
+% significance scores
+ranksumPvalue = nan(3);
+for iEpoch = [1 3]
+   var1 = variable.(epochNames{iEpoch});
+   
+   for jEpoch = setdiff([1 3], iEpoch)
+       var2 = variable.(epochNames{jEpoch});
+       
+       ranksumPvalue(iEpoch, jEpoch) = ranksum(var1, var2, 'tail', 'right');
+       
+   end
+end
+       
+% add the significance signs here ...  
+    
+    
+end
+
+
+
+
+function customCDF(variable)
+
+
+epochNames = fieldnames(variable);
+
+if isfield(variable.(epochNames{1}), 'data') % in case we are plotting the absolute values and not z-scores
+    
+    for iEpoch = 1:numel(epochNames)
+        variable2.(epochNames{iEpoch}) = variable.(epochNames{iEpoch}).data;
+    end
+    
+    variable = variable2;
+    clear variabale2
+end 
+
+
+colors = [[0 0 200]/255; [204 0 0]/255];
+
+hold on
+for iEpoch = 1:numel(epochNames)
+
+    currEpoch = epochNames{iEpoch};
+    pooledVar = variable.(currEpoch);
+
+    nUnits = numel(pooledVar);
+    
+    [cdf_pooled, x_pooled] = ecdf(pooledVar);
+    auc.(currEpoch) = trapz(x_pooled, cdf_pooled);
+
+
+    [x_pooled, idx] = unique(x_pooled);
+    cdf_pooled = cdf_pooled(idx);
+    
+%     area(x_pooled, cdf_pooled, 'FaceColor', colors(iEpoch, :), 'FaceAlpha', 0.3, 'EdgeColor', colors(iEpoch, :), 'linewidth', 0.5, 'EdgeAlpha', 0.6)
+    ax(iEpoch) = plot(x_pooled, cdf_pooled, 'color', colors(iEpoch, :), 'linewidth', 1, 'DisplayName', currEpoch);
+
+    medianCorr.(currEpoch) = nanmedian(pooledVar);
+
+end
+
+nIters = 10000;
+auc_chance = nan(nIters, 1);
+
+
+for iIter = 1:nIters
+    rndPrctls = randi(100, nUnits, 1);
+
+    [cdf_chnace, x_chance] = ecdf(rndPrctls);
+
+    auc_chance(iIter) = trapz(x_chance, cdf_chnace);
+end
+
+
+
+ylim([0 1])
+yl = ylim;
+xl = xlim;
+
+
+
+
+
+for iEpoch = 1:numel(epochNames)
+    currEpoch = epochNames{iEpoch};
+
+    [~, pval] = ttest2(auc.(currEpoch), auc_chance, 'tail', 'left');
+
+    line([xl(1) medianCorr.(currEpoch)], [0.5 0.5], 'linewidth', 0.5, 'linestyle', ':', 'color', colors(iEpoch, :))
+    line([medianCorr.(currEpoch) medianCorr.(currEpoch)], [yl(1) 0.5], 'linewidth', 0.5, 'linestyle', ':', 'color', colors(iEpoch, :))
+    text(medianCorr.(currEpoch), 0.07, sprintf('%.2f(p=%.2e)', medianCorr.(currEpoch), pval), 'fontsize', 6, 'color', colors(iEpoch, :))
+
+end
+       
+% add the significance signs here ...  
+    
+
+legend(ax, 'location', 'northoutside', 'box', 'off')
+
+    
+end
+
+
+
+function output = nanprctile(data, percentile)
+
+data = data(~isnan(data));
+output = prctile(data, percentile);
+
+end
+

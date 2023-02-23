@@ -1,0 +1,384 @@
+function assemblyTuning_selectedPeriods_v2(sessionNumber, condition)
+
+
+% sz = getenv('SLURM_CPUS_PER_TASK');
+% 
+% theCluster = parcluster('local');
+% 
+% JobFolder = sprintf('/home/kmaboudi/.matlab/trash/job_%s', sessionNumber);
+% mkdir(JobFolder)
+% theCluster.JobStorageLocation = JobFolder;
+% 
+% p = parpool(theCluster, str2double(sz));
+% 
+% 
+% addpath(genpath('/nfs/turbo/umms-kdiba/NCMLproject/ReplayPreplayAnalyses'))
+
+% parentDir = '/nfs/turbo/umms-kdiba/Kourosh/NCMLproject/concat_GreatLakes_datasets_temp';
+parentDir = '/home/kouroshmaboudi/Documents/NCMLproject/assemblyTuning_finalResults/';
+
+rr = dir(parentDir);
+sessionName = rr(sessionNumber+2).name
+
+
+basePath    = fullfile(parentDir, sessionName);
+storagePath = fullfile(basePath, 'assemblyTunings');
+mkdir(storagePath)
+
+load(fullfile(basePath, 'spikes', [sessionName '.spikes.mat']), 'spikes_pyr', 'fileInfo')
+load(fullfile(basePath, 'spikes', [sessionName '.clusterQuality.mat']), 'clusterQuality')
+
+
+
+
+% load the brain state information
+fileName = fullfile('/home/kouroshmaboudi/Documents/NCMLproject/StateDetectionResults',  sessionName, [sessionName '.brainStateDetection_HMMtheta_EMG_SWS_SchmidtTrigger.mat']);
+
+% fileName = fullfile(basePath, 'spikes', [sessionName '.brainStateDetection_HMMtheta_EMG_SWS_SchmidtTrigger.mat']);
+
+if isfile(fileName)
+    load(fileName, 'brainState')
+    brainState = brainState.bouts(:, 1:3);
+    
+
+    % to comply with Hiro's datasets
+    % 1:NREM, 2:REM, 3:QWAKE, 4:WAKE
+    brainState2 = brainState;
+    brainState2(brainState(:, 3) == 3, 3) = 4;
+    brainState2(brainState(:, 3) == 4, 3) = 3;
+    brainState = brainState2;
+
+    durations = diff(brainState(:, 1:2), [], 2);
+    inclusionIdx = durations > 6;
+
+    brainState = brainState(inclusionIdx, :);
+
+else % for Hiro's datasets
+    brainState = fileInfo.brainStates;
+end
+
+
+
+% population burst events
+
+load(fullfile(basePath, 'PopulationBurstEvents', [sessionName '.PBEs_before_splitting.mat']), 'primaryPBEs')
+
+PBEs(:,1) = [primaryPBEs.startT]-0.1;
+PBEs(:,2) = [primaryPBEs.endT]+0.1;
+
+
+% ripples
+% 
+% load(fullfile(basePath, [sessionName '.rippleEvents.mat']), 'rippleLFP')
+% ripplePower = rippleLFP.power_summed;
+% ripple_ts   = rippleLFP.timePnts;
+
+
+% behavioral epochs
+
+behavior = fileInfo.behavior;
+
+startT.pre  = behavior.time(1,1); endT.pre  = behavior.time(2,1); 
+startT.run  = behavior.time(2,1); endT.run  = behavior.time(2,2); 
+startT.post = behavior.time(2,2); endT.post = startT.post + 5*60*60; %behavior.time(3,2); 
+
+ 
+
+spikes   = spikes_pyr;
+nPosBins = numel(spikes(1).spatialTuning_smoothed.uni);
+nUnits   = numel(spikes); 
+
+
+% non-directional spatial tuning
+
+spatialTunings = nan(nUnits, nPosBins);
+PFpeakLoc      = nan(nUnits, 1);
+
+for iUnit = 1:nUnits
+    spatialTunings(iUnit, :) = spikes(iUnit).spatialTuning_smoothed.uni; 
+    [~, PFpeakLoc(iUnit)] = max(spatialTunings(iUnit, :));
+
+end
+
+
+timeStamps = 0:0.05:endT.post;
+
+
+brainState(:,2) = brainState(:, 2) - 1e-3;
+brainState(:,4) = brainState(:, 3);
+
+timePnts = brainState(:, 1:2)';
+timePnts = timePnts(:);
+
+stateIdx = brainState(:, 3:4)';
+stateIdx = stateIdx(:);
+
+stateIdx_intrp = interp1(timePnts, stateIdx, timeStamps);
+
+
+% population burst events
+PBEidx = zeros(numel(timeStamps), 1);
+
+for ipbe = 1:size(PBEs, 1)
+    PBEidx(timeStamps > PBEs(ipbe, 1) & timeStamps < PBEs(ipbe, 2)) = 1;
+end
+
+
+% % ripple 
+% ripple_interp = interp1(ripple_ts, ripplePower, timeStamps); 
+
+
+
+% bouts with the desired brain state/condition
+
+% condition: 1:PBEs, 2:REM, 3:NREM non-PBE, 4:home cage awake theta
+
+switch condition 
+
+    case 1
+        conditionIdx = PBEidx == 1;
+        conditionName = 'PBEs';
+
+    case 2 % REM
+        conditionIdx = stateIdx_intrp' == 2 & PBEidx == 0;
+        conditionName = 'REM';
+
+    case 3 % NREM non-PBE low ripple amplitude
+        conditionIdx = stateIdx_intrp' == 1 & PBEidx == 0 & ripple_interp' < 1;
+        conditionName = 'nonPBEsExtend_nonRipple_NREM';
+
+    case 4 % active wake
+        conditionIdx = stateIdx_intrp' == 4 & PBEidx == 0;
+        conditionName = 'aWAKE';
+    
+    case 5 % whole NREM
+        conditionIdx = stateIdx_intrp' == 1;
+        conditionName = 'NREM';
+
+end
+ 
+
+try 
+    crossup   = find([0; diff(conditionIdx)] == 1);
+    crossdown = find([0; diff(conditionIdx)] == -1);
+catch 
+    crossup   = find([0 diff(conditionIdx)] == 1);
+    crossdown = find([0 diff(conditionIdx)] == -1);
+end
+
+
+if crossdown(1) < crossup(1); crossdown(1) = []; end
+if crossup(end) > crossdown(end); crossup(end) = []; end
+
+bouts = timeStamps([crossup crossdown]);
+
+
+
+
+%% assembly Tunings 
+% Spatial information and correlation with place fields of assesmbly tunings
+% and corresponding z-scores by comparing the values againts distibutions calculated based on unit ID shuffle surrogates
+
+
+epochNames = {'pre'; 'run'; 'post'};
+dataTypes  = {'data'; 'ui'};
+
+% nUIshuffles = 100;
+% nSeg        = 5;
+% 
+% nUIshuffles_perSeg = nUIshuffles/nSeg;
+
+for binDur = 0.02
+    
+    for iEpoch = 2
+
+        currEpoch = epochNames{iEpoch};
+        epoch     = [startT.(currEpoch) endT.(currEpoch)]; %
+        
+
+        currEpoch_includeIdx = bouts(:, 1) > epoch(1)+3*diff(epoch)/4 & bouts(:, 1) < epoch(2); % 
+        currBouts = bouts(currEpoch_includeIdx, :);
+
+
+        fprintf(['\nProcessing ' currEpoch ' ,binDur = ' num2str(binDur) ' ..'])
+
+        
+        % actual data
+        fprintf('\nCalculating the assembly tunings based on actual PBEs ..')
+        
+
+        ifShuffle = 0;
+        assemblyTunings.(currEpoch).data = calculateAssemblyTuning_selectedPeriods(currBouts, spikes, binDur, clusterQuality, ifShuffle);    
+
+%         [assemblyTunings.(currEpoch).data, concatBinCenters.(currEpoch), ...
+%                 concatBoutIDs.(currEpoch), boutFirings_unit.(currEpoch).data] = calculateAssemblyTuning_selectedPeriods(currBouts, spikes, binDur, clusterQuality, ifShuffle);
+
+%         
+%         fprintf('\nCalculating the assembly tunings based on unit identity shuffled PBEs ..')
+%         ifShuffle = 1;
+%         
+%         
+% 
+%         currAssemblyTunings = nan(nUnits, nPosBins, nUIshuffles);
+% 
+%         for seg = 1:nSeg
+% 
+%             parfor i_ui = ((seg-1)*nUIshuffles_perSeg +1):(seg*nUIshuffles_perSeg)
+%                 currAssemblyTunings(:, :, i_ui) = calculateAssemblyTuning_selectedPeriods(currBouts, spikes, binDur, clusterQuality, ifShuffle);
+%             end
+%         end
+% 
+%         assemblyTunings.(currEpoch).ui = currAssemblyTunings;
+
+
+
+        for idata = 1%:2
+            
+            currDataType = dataTypes{idata};
+            
+            currAssemblyTunings = assemblyTunings.(currEpoch).(currDataType);
+            nSamples = size(currAssemblyTunings, 3);
+
+            assemblyTuningPFcorr.(currEpoch).(currDataType)         = nan(nUnits, nSamples);
+            assemblyTuningPFKLdiv.(currEpoch).(currDataType)        = nan(nUnits, nSamples);
+            assemblyTuningPF_prefPosDist.(currEpoch).(currDataType) = nan(nUnits, nSamples);
+            assemblyTuning_prefPos.(currEpoch).(currDataType)       = nan(nUnits, nSamples);
+
+            for is = 1:nSamples
+
+                allCorrs = corr(currAssemblyTunings(:, :, is)', spatialTunings');
+                assemblyTuningPFcorr.(currEpoch).(currDataType)(:, is) = diag(allCorrs);
+    
+                allKLdiv = calKLDivergence(currAssemblyTunings(:, :, is)', spatialTunings');
+                assemblyTuningPFKLdiv.(currEpoch).(currDataType)(:, is) = diag(allKLdiv);
+                
+                [assemblyTuningPF_prefPosDist.(currEpoch).(currDataType)(:, is), assemblyTuning_prefPos.(currEpoch).(currDataType)(:, is)] = ...
+                    calDistPrefPosition(currAssemblyTunings(:, :, is), PFpeakLoc, []);
+            end
+
+        end
+        
+%         assemblyTuningPFcorr_pscore.(currEpoch)         = calPrctile(assemblyTuningPFcorr.(currEpoch));
+%         assemblyTuningPFKLdiv_pscore.(currEpoch)        = calPrctile(assemblyTuningPFKLdiv.(currEpoch));
+%         assemblyTuningPF_prefPosDist_pscore.(currEpoch) = calPrctile(assemblyTuningPF_prefPosDist.(currEpoch));
+    end
+
+
+%     fileName = sprintf('%s.assemblyTunings_%s.mat', sessionName, conditionName);
+
+%     save(fullfile(storagePath, fileName), ...
+%         'assemblyTunings', ...
+%         'assemblyTuning_prefPos', ...
+%         'assemblyTuningPF_prefPosDist', ...
+%         'assemblyTuningPFcorr', 'assemblyTuningPFKLdiv'); %, ...
+% %         'assemblyTuningPFcorr_pscore', ...
+% %         'assemblyTuningPFKLdiv_pscore', ...
+% %         'assemblyTuningPF_prefPosDist_pscore');   
+
+end
+
+
+
+end
+
+
+
+%% subfunctions
+
+function output = nanprctile(x, percent)
+
+output = prctile(x(~isnan(x)), percent);
+
+end
+
+
+function KLdiv = calKLDivergence(learnedTunings, spatialTunings)
+
+% the units should be in columns of learned tunings or spatialTunings
+% matrix
+% 
+% if size(spatialTunings, 2) > size(spatialTunings, 1)
+%     spatialTunings = spatialTunings';
+% end
+
+spatialTunings = spatialTunings ./ repmat(sum(spatialTunings, 1), [size(spatialTunings, 1) 1]);
+spatialTunings = spatialTunings + eps;
+
+[~, nUnits] = size(spatialTunings);
+
+% if size(learnedTunings, 1) ~= nPosBins
+%     learnedTunings = learnedTunings';
+% end
+
+learnedTunings = learnedTunings ./ repmat(sum(learnedTunings, 1), [size(learnedTunings, 1) 1]);
+learnedTunings = learnedTunings + eps;
+
+
+KLdiv = nan(nUnits);
+
+for iUnit = 1:nUnits
+    currSpatialTuning = spatialTunings(:, iUnit);
+    
+    spatialTuningTerm = repmat(currSpatialTuning, [1 nUnits]);
+    KLdiv(:, iUnit) = sum(spatialTuningTerm .* (log(spatialTuningTerm) - log(learnedTunings)), 1);
+end
+
+end
+
+
+
+
+function [prefPosDist, asTuning_prefPos] = calDistPrefPosition(assemblyTunings, PF_prefPos, activeUnits)  
+    
+    nUnits = numel(PF_prefPos);
+    nSets = size(assemblyTunings, 3);
+    nPosBins = size(assemblyTunings, 2);
+    
+    if isempty(activeUnits)
+        activeUnits = 1:nUnits;
+    end
+    
+    prefPosDist   = nan(nUnits, nSets);
+    asTuning_prefPos = nan(nUnits, nSets);
+
+    for n = 1:nSets
+       currAsTunings = assemblyTunings(:,:, n);
+       [~, asTuning_prefPos(:, n)] = max(currAsTunings, [], 2);
+       prefPosDist(activeUnits, n) = abs(asTuning_prefPos(activeUnits, n) - PF_prefPos(activeUnits));
+       prefPosDist(activeUnits, n) = prefPosDist(activeUnits, n)/nPosBins;
+    end
+
+end
+
+
+function prctileScore = calPrctile(variable)
+
+
+[nUnits, nShuffles] = size(variable.ui);
+prctileScore = zeros(nUnits, 1);
+
+for iUnit = 1:nUnits
+    
+    if isnan(variable.data(iUnit))
+        prctileScore(iUnit) = nan;
+    else
+        prctileScore(iUnit) = numel(find(variable.ui(iUnit, :) <= variable.data(iUnit)))/nShuffles * 100;
+    end
+
+end
+
+end
+
+function win = gausswindow(sigma, halfwidth)
+
+mu = 0;
+x = mu - halfwidth : mu + halfwidth;
+
+
+y = zeros(size(x));
+for i = 1 : length(x)
+    y(i) = (1/sigma*sqrt(2*pi)) * exp(-(x(i) - mu)^2 / 2/sigma^2);
+end
+
+win = y./sum(y);
+end

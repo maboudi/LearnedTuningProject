@@ -1,0 +1,114 @@
+function  clusterQuality = calclusterquality(baseFile, nFeatures, nChannels)
+
+% mainDir = '/data/GrossmarkData_BapunsClusters';
+% % mainDir = '/data/Hiro_clusters/Roy_Data/Roy-maze3';
+% currentSession = 'Buddy_06272013';
+% 
+% datasetDir = fullfile(mainDir, currentSession);
+% cd(datasetDir)
+% allFet = dir([currentSession '.fet.*']);
+
+allFet = dir([baseFile '.fet.*']);
+
+nShanks = length(allFet); 
+
+
+clusterQuality = struct('mahalDist', [], 'isoDist', [], 'Lratio', [], 'clus', []);
+
+% nFeatures = 26;
+% nChannels = 7;
+
+for iShank = 1:nShanks   
+    
+    
+    fileID = fopen([baseFile '.fet.' num2str(iShank)]);
+    featureFile = fscanf(fileID, '%d');
+    
+    
+    try
+        
+    featureFile2 = featureFile(2:end);
+    
+    
+    nf = 20:35;
+    
+    for ii = 1:numel(nf)
+       
+        curr_nf = nf(ii);
+        
+        if mod(numel(featureFile2), curr_nf) == 0
+           nFeatures = 
+        
+    end
+    
+    
+    featureFile2 = reshape(featureFile2, [nFeatures numel(featureFile2)/nFeatures]);
+    featureFile2 = featureFile2(1:nChannels*3, :);
+    
+    catch
+        iShank
+        featureFile(1)
+        
+        continue
+    end
+    
+%     resFile = load([baseFile '.res.' num2str(iShank)]);
+    cluFile = load([baseFile '.clu.' num2str(iShank)]);
+    
+    nClus = cluFile(1);
+    cluFile = cluFile(2:end);
+    uniqClus = unique(cluFile);
+    
+    
+    cluFeatures = cell(nClus, 1);
+    nClusterSpikes = zeros(nClus, 1);
+    for iClu = 1:nClus
+        currClu = uniqClus(iClu);
+        cluFeatures{iClu}    = featureFile2(:, cluFile == currClu);
+        nClusterSpikes(iClu) = numel(find(cluFile == currClu));
+    end
+    
+    
+    df = nChannels*3;
+    clusterQuality(iShank).mahalDist = cell(nClus, nClus);
+    clusterQuality(iShank).Lratio    = zeros(nClus, nClus);
+    clusterQuality(iShank).isoDist   = zeros(nClus, nClus);
+    
+    for iClu = 1:nClus
+        
+       refClu = cluFeatures{iClu}';
+       
+       for jClu = 1:nClus
+          
+           testClu = cluFeatures{jClu}';
+               
+           clusterQuality(iShank).mahalDist{jClu, iClu} = mahal(testClu, refClu);
+
+           L = sum(1-chi2cdf(clusterQuality(iShank).mahalDist{jClu, iClu},df));
+           clusterQuality(iShank).Lratio(jClu, iClu) = L/nClusterSpikes(iClu);
+           
+           
+           if nClusterSpikes(iClu) < nClusterSpikes(jClu)  
+                sorted = sort(clusterQuality(iShank).mahalDist{jClu, iClu});
+                clusterQuality(iShank).isoDist(jClu, iClu) = sorted(nClusterSpikes(iClu));
+           elseif nClusterSpikes(iClu) > nClusterSpikes(jClu)
+                clusterQuality(iShank).isoDist(jClu, iClu) = median(clusterQuality(iShank).mahalDist{jClu, iClu});
+           end
+           
+
+       end
+        
+    end
+    
+    clusterQuality(iShank).clus = uniqClus;
+    
+end
+
+% mahalDistances = ;
+
+% save(fullfile(datasetDir, [baseFile '.mahalDist.mat']), )
+clusterQuality = rmfield(clusterQuality, 'mahalDist');
+% save(fullfile(datasetDir, [baseFile '.clusterQuality.mat']), 'clusterQuality')
+
+
+
