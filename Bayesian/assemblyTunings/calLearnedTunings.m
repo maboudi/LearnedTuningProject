@@ -31,6 +31,7 @@ for iUnit = 1:nUnits
 end
 
 
+
 % place fields of each unit needed for calculating the posteriors 
 
 if isfield(spikes(1).spatialTuning_smoothed, 'RL')

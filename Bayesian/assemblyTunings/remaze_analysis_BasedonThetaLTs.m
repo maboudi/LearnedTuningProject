@@ -1,6 +1,6 @@
 clear
 clc
-% close all
+close all
 
 parentDir = '/home/kouroshmaboudi/Documents/NCMLproject/';
 rr = dir(fullfile(parentDir, 'assemblyTuning_finalResults'));
@@ -10,25 +10,24 @@ currSessions = 8:11;
 nSessions    = numel(currSessions);
 
 
-epochNames = {'pre';'maze'; 'post'; 'post_late'; 'remaze'; 'maze_theta'}; 
+epochNames = {'pre'; 'maze'; 'post'; 'post_late'; 'remaze_theta'; 'maze_theta'}; 
 dataTypes  = {'data'; 'ui'};
 
 
+nUnits                = nan(nSessions, 1); % number of units within each session
+unitSessNum           = cell(nSessions, 1); % the session number each unit belongs to
 
-activeUnits = cell(nSessions, 1);
-nUnits      = nan(nSessions, 1);
-unitSessNum = cell(nSessions, 1);
+spatialTuning         = cell(nSessions, 1); % spatial tunings on MAZE
+spatialTuning_re      = cell(nSessions, 1); % spatial tunings on reMAZE
 
-spatialTuning    = cell(nSessions, 1);
-spatialTuning_re = cell(nSessions, 1);
+spatialTuning_feature = cell(nSessions, 1); % spatial information of neurons on MAZE 
 
-spatialInfo        = cell(nSessions, 1);
-POST_LTstabilities = cell(nSessions, 1);
-LTspatialInfo      = cell(nSessions, 1);
+learnedTuning         = cell(nSessions, 1);
+learnedTuningPFcorr   = cell(nSessions, 1);
+LTspecificity         = cell(nSessions, 1);
+POSTLTstability       = cell(nSessions, 1); % stability of the POST LTs during the first 4 hours
 
-learnedTuning_sub = cell(nSessions, 1);
 
-% learnedTuningPFcorr       = cell(nSessions, 1);
 remaze_post_LTcorrelation = cell(nSessions, 1);
 remaze_maze_LTcorrelation = cell(nSessions, 1);
 
@@ -46,98 +45,63 @@ for iSess = 1:nSessions
        
 
 
-    % % PFs
+    % % spatial tunings during MAZE and reMAZE
 
     load(fullfile(basePath, 'spikes', [sessionName '.spikes.mat']), 'spikes_pyr')
     spikes = spikes_pyr;
+    nUnits_total = numel(spikes);
+    
+    % for all sessions except Rat U, both MAZE and reMAZE spatial tunings
+    % are within the same data structure, so for Rat U we need to the
+    % following in addistion 
 
-    if sessionNumber == 9
-        load(fullfile(parentDir, 'sessions_calculated_PBEinfo4', sessionName, 'spikes', [sessionName '.spikes2.mat']), 'spikes_pyr2')%%%%
-        spikes_re = spikes_pyr2;%%%%
+    if sessionNumber == 9 % need to fix this soon
+        load(fullfile(parentDir, 'sessions_calculated_PBEinfo4', sessionName, 'spikes', [sessionName '.spikes2.mat']), 'spikes_pyr2')
+        spikes_re = spikes_pyr2;
     end
-
 
 
 
     % % sleep/quiet wake LTs
-
-    s = load(fullfile(basePath, 'assemblyTunings', [sessionName '.assemblyTunings_allPBEs_Lthresh1e_3.mat']), 'assemblyTunings', 'assemblyTuningPFcorr', 'activeUnits'); % 
-   
-    stableUnits = s.activeUnits.post; 
-
+    % (assembly tuning is the same as learned tuning)
+    s = load(fullfile(basePath, 'assemblyTunings', [sessionName '.assemblyTunings_allPBEs_Lthresh1e_3.mat']), 'assemblyTunings', 'activeUnits'); 
+    
+    stableUnits = s.activeUnits.post; % by stable units we mean the units that particiapted within at least 100 PBEs during an epoch
     nUnits(iSess) = numel(stableUnits);
 
-    LTs.pre = s.assemblyTunings.pre.data; %%%
-    learnedTuningPFcorr.pre.data{iSess} = s.assemblyTuningPFcorr.pre.data; %%%
+    for iEpoch = [1 3]
+        currEpoch = epochNames{iEpoch};
+        LTs.(currEpoch) = s.assemblyTunings.(currEpoch).data;  
+    end
+    LTs.maze = s.assemblyTunings.run.data;
 
 
 
-
-    %%% added temporary to include MAZE PBEs instead of MAZE theta
-    LTs.maze = s.assemblyTunings.run.data; 
-    learnedTuningPFcorr.maze.data{iSess} = s.assemblyTuningPFcorr.run.data;
-    
-
-    
-    s = load(fullfile(basePath, 'assemblyTunings', [sessionName '.assemblyTunings_allPBEs_Lthresh1e_3.mat']), 'assemblyTunings', 'assemblyTuningPFcorr', 'assemblyTuningSpatialInfo'); % _after6hoursPost
-
-    LTs.post = s.assemblyTunings.post.data;
-    learnedTuningPFcorr.post.data{iSess} = s.assemblyTuningPFcorr.post.data;
-    
-%     LTspatialInfo{iSess} = s.assemblyTuningSpatialInfo.post.data; 
-%     LTspatialInfo{iSess} = sum(LTs.post.^2, 2)./(sum(LTs.post, 2).^2);
-   
-%     LTspatialInfo{iSess} = nan(size(LTs.post, 1), 1);
-%     for iUnit = 1:size(LTs.post, 1)
-%         LTspatialInfo{iSess}(iUnit) = ginicoeff(LTs.post(iUnit, :));
-%     end
-
-    
-
-    s = load(fullfile(basePath, 'assemblyTunings', [sessionName '.assemblyTunings_allPBEs_last4hoursPOST.mat']), 'assemblyTunings', 'assemblyTuningPFcorr'); % _1st_2hoursPOST
-
+    % % late POST LTs (last 4 hours of POST)
+    s = load(fullfile(basePath, 'assemblyTunings', [sessionName '.assemblyTunings_allPBEs_last4hoursPOST.mat']), 'assemblyTunings'); 
     LTs.post_late = s.assemblyTunings.post.data;
-    learnedTuningPFcorr.post_late.data{iSess} = s.assemblyTuningPFcorr.post.data;
     
-
-
 
     % % MAZE theta LTs
-    s = load(fullfile(basePath, 'assemblyTunings', [sessionName '.assemblyTunings_activeRun_binDur0.02.mat']), 'learnedTunings'); %'.assemblyTunings_maze_stricterThetaDetection.mat'
-         
+    s = load(fullfile(basePath, 'assemblyTunings', [sessionName '.assemblyTunings_activeRun_binDur0.02.mat']), 'learnedTunings'); % what happens if I use stricterThetaDetection for this as well
     LTs.maze_theta = s.learnedTunings;
-%     learnedTuningPFcorr.maze_theta.data{iSess} = s.learnedTuningPFcorr;
-
-
     
     
     % % REMAZE theta LTs
-    s = load(fullfile(basePath, 'assemblyTunings', [sessionName '.assemblyTunings_remaze_stricterThetaDetection.mat']), 'learnedTunings', 'learnedTuningPFcorr');
-    
-    LTs.remaze      = s.learnedTunings;
-    learnedTuningPFcorr.remaze.data{iSess} = s.learnedTuningPFcorr;
+    s = load(fullfile(basePath, 'assemblyTunings', [sessionName '.assemblyTunings_remaze_stricterThetaDetection.mat']), 'learnedTunings');
+    LTs.remaze_theta = s.learnedTunings;
     
 
     
-
-    % % load stabilities
-
+    % % load stabilities (only for POST)
     s = load(fullfile(basePath, 'assemblyTunings', [sessionName '.POSTstability.mat']), 'POSTstabilities');
-    POSTstability = s.POSTstabilities; 
+    POSTLTstability{iSess} = s.POSTstabilities; 
 
 
 
 
-    % % 
+    % % Preprocess MAZE and reMAZE spatial tunings (interpolating, smoothing, etc)
 
-    spikes = spikes(stableUnits);
-
-    if sessionNumber == 9 % rat U
-        spikes_re = spikes_re(stableUnits);
-    end
-
-    
-    % track spatial tunings
     nPosBins = numel(spikes(1).spatialTuning_smoothed.uni);
     
     interpPosBins   = linspace(0, nPosBins, 200);
@@ -145,37 +109,43 @@ for iSess = 1:nSessions
     
     
     % non-directional spatial tuning
-    spatialTunings_merge    = zeros(nUnits(iSess), nPosBins_interp);
-    spatialTunings_merge_re = zeros(nUnits(iSess), nPosBins_interp); %%
-    spatialInfo_sess        = nan(nUnits(iSess), 1);
 
-    peakPFlocation    = zeros(nUnits(iSess), 1);
-    peakPFfiring      = zeros(nUnits(iSess), 1);
+    spatialTuning{iSess}         = zeros(nUnits_total, nPosBins_interp);
+    spatialTuning_re{iSess}      = zeros(nUnits_total, nPosBins_interp); 
+    spatialTuning_feature{iSess} = nan(nUnits_total, 1);
+    peakPFlocation               = zeros(nUnits_total, 1);
     
-    for iUnit = 1:nUnits(iSess)
+    for iUnit = 1:numel(spikes)
     
         currSpatialTuning = spikes(iUnit).spatialTuning_smoothed.uni;
         currSpatialTuning = interp1(1:nPosBins, currSpatialTuning, interpPosBins);
-%         currSpatialTuning = currSpatialTuning./max(currSpatialTuning);
-        currSpatialTuning = (currSpatialTuning - nanmean(currSpatialTuning))/nanstd(currSpatialTuning);
 
-        % added later
+        % Normalize the spatial tunings; zscoring (for multiple regression
+        % analysis), or set the max amplitude to one (for plotting the heatmaps) 
+
+        currSpatialTuning = (currSpatialTuning - mean(currSpatialTuning, 'omitnan'))/std(currSpatialTuning, 'omitnan');
+%         currSpatialTuning = currSpatialTuning./max(currSpatialTuning); 
+        spatialTuning{iSess}(iUnit, :) = currSpatialTuning;
+        [~, peakPFlocation(iUnit)]     = max(currSpatialTuning);
         
-%         spatialInfo_sess(iUnit) = spikes(iUnit).peakFR.uni;
-        temp = spikes(iUnit).peakPosBin.uni;
-
-        if temp == 1
-            spatialInfo_sess(iUnit) = nan;
-        else
-            spatialInfo_sess(iUnit) = min(temp - 0, nPosBins - temp)/nPosBins;
-        end
-    
-        spatialTunings_merge(iUnit, :) = currSpatialTuning;
-        [peakPFfiring(iUnit), peakPFlocation(iUnit)] = max(currSpatialTuning);
         
 
+        % MAZE Spatial tuning features 
 
-        % place fields during REMAZE (all session except RatS, for which the position during remaze isn't available)
+        spatialTuning_feature{iSess}(iUnit) = spikes(iUnit).spatialInfo.uni; % spatial information
+%         spatialInfo_sess{iSess}(iUnit) = spikes(iUnit).peakFR.uni; % peak place field firing rate
+        
+        % the distance from either track end
+%         temp = spikes(iUnit).peakPosBin.uni; 
+%         if temp == 1
+%             spatialTuning_feature{iSess}(iUnit) = nan;
+%         else
+%             spatialTuning_feature{iSess}(iUnit) = min(temp - 0, nPosBins - temp)/nPosBins;
+%         end
+        
+
+
+        % reMAZE spatial tunings (all session except RatS, for which the animal's positon on reMAZE isn't available)
         
         if ismember(sessionNumber, 9:11) % RatU_Day2, RatV_Day1, RatV_day3
 
@@ -187,70 +157,74 @@ for iSess = 1:nSessions
     
             currSpatialTuning = interp1(1:nPosBins, currSpatialTuning, interpPosBins);
 
-            currSpatialTuning = (currSpatialTuning - nanmean(currSpatialTuning))/nanstd(currSpatialTuning);
-
+            % Normalization similar to what done for MAZE spatial tunings
+            currSpatialTuning = (currSpatialTuning - mean(currSpatialTuning, 'omitnan'))/std(currSpatialTuning, 'omitnan');
 %             currSpatialTuning = currSpatialTuning./max(currSpatialTuning);
     
-            spatialTunings_merge_re(iUnit, :) = currSpatialTuning;
+            spatialTuning_re{iSess}(iUnit, :) = currSpatialTuning;
         end
-    
+
     end
 
-
-    [~, sortIdx] = sort(peakPFlocation, 'ascend');
-    sortedUnitIdx = stableUnits(sortIdx);
     
-    temp = nanmean(spatialTunings_merge, 1); %#ok<NANMEAN> 
-    
+    temp = mean(spatialTuning{iSess}, 1, 'omitnan');
     if flag == 1
-        startBin = find(~isnan(temp), 1, 'first');
-        endBin   = find(~isnan(temp), 1, 'last');
+        startBin = find(~isnan(temp), 1, 'first')
+        endBin   = find(~isnan(temp), 1, 'last')
         flag = 0;
     end
     
     nPosBins_interp = endBin - startBin + 1;
 
-    spatialTuning{iSess}    = spatialTunings_merge(sortIdx, startBin:endBin);
-    spatialTuning_re{iSess} = spatialTunings_merge_re(sortIdx, startBin:endBin);
-
-    % added later
-
-    spatialInfo{iSess}        = spatialInfo_sess(sortIdx);
-    POST_LTstabilities{iSess} = POSTstability(sortIdx);
-%     LTspatialInfo{iSess}      = LTspatialInfo{iSess}(sortIdx); 
+    spatialTuning{iSess}          = spatialTuning{iSess}(stableUnits, startBin:endBin);
+    spatialTuning_re{iSess}       = spatialTuning_re{iSess}(stableUnits, startBin:endBin);
+    spatialTuning_feature{iSess}  = spatialTuning_feature{iSess}(stableUnits);
     
-
-    %
+    
     
     for iEpoch = 1:numel(epochNames)
         currEpoch = epochNames{iEpoch};
     
-        % assembly Tunings
-        learnedTuning_sub{iSess}.(currEpoch) = nan(nUnits(iSess), nPosBins_interp);
-    
+        % Preprocessing learned Tunings: interpolation, smoothing 
+        % and calculating the spatial specificity of the learned tunings
+
+        learnedTuning{iSess}.(currEpoch) = nan(nUnits(iSess), nPosBins_interp);
+        LTspecificity{iSess}.(currEpoch) = nan(nUnits(iSess), 1);
+
         for iUnit = 1:nUnits(iSess)
     
-            currLearnedTuning = LTs.(currEpoch)(sortedUnitIdx(iUnit), :);
+            currLearnedTuning = LTs.(currEpoch)(stableUnits(iUnit), :);
             currLearnedTuning = interp1(1:nPosBins, currLearnedTuning, interpPosBins);
             currLearnedTuning(isnan(currLearnedTuning)) = 0;
 
+            % An additional smoothing of the learned tunings 
             if ismember(iEpoch , 1:4) % ripple LTs
                 currLearnedTuning = conv(currLearnedTuning, gw, 'same');
             end
 
             currLearnedTuning = currLearnedTuning(startBin:endBin);
-    
-%             learnedTuning_sub{iSess}.(currEpoch)(iUnit, :) = currLearnedTuning; 
-            % learnedTuning_sub{iSess}.(currEpoch)(iUnit, :) = currLearnedTuning/max(currLearnedTuning);
-            learnedTuning_sub{iSess}.(currEpoch)(iUnit, :) = (currLearnedTuning - nanmean(currLearnedTuning))/nanstd(currLearnedTuning);
+            
+
+            % Normalize the learned tunings. For the multiple regression analyses it might be better to use the z-scored version
+            
+            learnedTuning{iSess}.(currEpoch)(iUnit, :) = (currLearnedTuning - mean(currLearnedTuning, 'omitnan'))/std(currLearnedTuning, 'omitnan');
+            % learnedTuning{iSess}.(currEpoch)(iUnit, :) = currLearnedTuning; 
+            % learnedTuning{iSess}.(currEpoch)(iUnit, :) = currLearnedTuning/max(currLearnedTuning);
+            
+
+            % calculate the spatial specificity of the learned tunings
+            LTspecificity{iSess}.(currEpoch)(iUnit) = ginicoeff(currLearnedTuning); % non-z-scored learned tunings were used
+            LTspecificity{iSess}.(currEpoch)(iUnit) = sum(currLearnedTuning.^2, 2)./(sum(currLearnedTuning, 2).^2);
+
         end
         
-        allCorrs = corr(learnedTuning_sub{iSess}.(currEpoch)', spatialTuning{iSess}');
 
-%         if ismember(iEpoch, [2 4])
-            learnedTuningPFcorr.(currEpoch).data{iSess} = diag(allCorrs);
-%         end
+        % calculate the correlations between learned tunings and MAZE spatial tunings
 
+        allCorrs = corr(learnedTuning{iSess}.(currEpoch)', spatialTuning{iSess}');
+        learnedTuningPFcorr{iSess}.(currEpoch).data = diag(allCorrs);
+
+        % calculate a shuffle dataset by randomizing the unit ID of the MAZE spatial tunings 
         nShuffles      = 10000;
         shuffle_PFcorr = nan(nUnits(iSess), nShuffles);
         for i_s = 1:nShuffles
@@ -258,47 +232,38 @@ for iSess = 1:nSessions
             cidx = randi(nUnits(iSess), nUnits(iSess), 1);
             shuffle_PFcorr(:, i_s) = allCorrs(sub2ind(size(allCorrs), (1:nUnits(iSess))', cidx));
         end
-        learnedTuningPFcorr.(currEpoch).ui{iSess} = shuffle_PFcorr;   
+        learnedTuningPFcorr{iSess}.(currEpoch).ui = shuffle_PFcorr;   
+
     end
     
+    POSTLTstability{iSess} = POSTLTstability{iSess}(stableUnits);
+    
 
-    % correlation between LTs in different period (not individually with the place field)
-
-    allCorrs = corr(LTs.remaze', LTs.post');
-    temp     = diag(allCorrs);
-    remaze_post_LTcorrelation{iSess} = temp(sortedUnitIdx);
-
-    unitSessNum{iSess} = [sessionNumber * ones(numel(sortedUnitIdx), 1) sortedUnitIdx];
+    % keep track of unit   
+    unitSessNum{iSess} = [sessionNumber * ones(numel(stableUnits), 1) stableUnits];
   
 end
 
 
 
-% sorting the units again in pooled data
+% Sorting the units based on the order of the place fields by pooling across sessions 
 
-cnctSpatialTunings = cell2mat(spatialTuning);
+cnctSpatialTunings = cell2mat(spatialTuning); % concatenated across all sessions
 [~, PFpeakLocs]    = max(cnctSpatialTunings, [], 2);
 [~, sortIdx]       = sort(PFpeakLocs, 'ascend');
 
-cnctSpatialTunings = cnctSpatialTunings(sortIdx, :);
-PFpeakLocs         = PFpeakLocs(sortIdx);
-
-
+SpatialTunings_pooled = cnctSpatialTunings(sortIdx, :);
 
 if ismember(sessionNumber, 9:11) % except RatS
-    cnctSpatialTunings_re  = cell2mat(spatialTuning_re);
-    cnctSpatialTunings_re  = cnctSpatialTunings_re(sortIdx, :);
+    cnctSpatialTunings_re    = cell2mat(spatialTuning_re);
+    spatialTunings_re_pooled = cnctSpatialTunings_re(sortIdx, :);
 end
 
-cnctSpatialInfo = cell2mat(spatialInfo);
-cnctSpatialInfo = cnctSpatialInfo(sortIdx);
+cnctSpatialTuning_feature = cell2mat(spatialTuning_feature);
+cnctSpatialTuning_feature = cnctSpatialTuning_feature(sortIdx);
 
-cnctPOST_LTstabilities = cell2mat(POST_LTstabilities);
-cnctPOST_LTstabilities = cnctPOST_LTstabilities(sortIdx);
-
-
-% cnctLTspatialInfo = cell2mat(LTspatialInfo);
-% cnctLTspatialInfo = cnctLTspatialInfo(sortIdx);
+cnctPOSTLTstability = cell2mat(POSTLTstability);
+cnctPOSTLTstability = cnctPOSTLTstability(sortIdx);
 
 
 cnctUnitSessNum = cell2mat(unitSessNum);
@@ -310,36 +275,35 @@ for iEpoch = 1:numel(epochNames)
     currEpoch = epochNames{iEpoch};
     
     currLearnedTunings = cell(nSessions, 1);
-
+    currLTspecificity  = cell(nSessions, 1);
     for dt = 1:2    
         currLTPFcorrs.(dataTypes{dt}) = cell(nSessions, 1);
     end
 
     for iSess = 1:nSessions      
-        currLearnedTunings{iSess} = learnedTuning_sub{iSess}.(currEpoch);
+        currLearnedTunings{iSess} = learnedTuning{iSess}.(currEpoch);
         
-
         for dt = 1:2
-            currLTPFcorrs.(dataTypes{dt}){iSess} = learnedTuningPFcorr.(currEpoch).(dataTypes{dt}){iSess};
+            currLTPFcorrs.(dataTypes{dt}){iSess} = learnedTuningPFcorr{iSess}.(currEpoch).(dataTypes{dt});
         end
+
+        currLTspecificity{iSess} = LTspecificity{iSess}.(currEpoch);
     end
 
-    cnctLearnedTunings = cell2mat(currLearnedTunings);
+    cnctLearnedTunings     = cell2mat(currLearnedTunings);
     LTs_pooled.(currEpoch) = cnctLearnedTunings(sortIdx, :);
 
     for dt = 1:2
         cnctLTPFcorrs = cell2mat(currLTPFcorrs.(dataTypes{dt}));
         LTPFcorrs_pooled.(currEpoch).(dataTypes{dt}) = cnctLTPFcorrs(sortIdx);
     end
+        
+    cnctLTspecificity = cell2mat(currLTspecificity);
+    LTspecificity_pooled.(currEpoch) = cnctLTspecificity(sortIdx);
 
-    % calculate the Gini coefficient of the LTs
-
-    cnctLTspatialInfo.(currEpoch) = nan(size(LTs_pooled.(currEpoch), 1), 1);
-    for iUnit = 1:size(LTs_pooled.(currEpoch), 1)
-        cnctLTspatialInfo.(currEpoch)(iUnit) = ginicoeff(LTs_pooled.(currEpoch)(iUnit, :));
-    end
 
 end
+
 
 % LT similarity between POST and REMAZE
 remaze_post_LTcorrelation = cell2mat(remaze_post_LTcorrelation);
@@ -348,13 +312,14 @@ remaze_post_LTcorrelation = remaze_post_LTcorrelation(sortIdx);
 
 
 
-%% Main Figure 4
+
+%% Main Figure 5
 
 
 %% plot the LTs separately for low and high POST LT-PF correlation
 
 
-allCorrs         = corr(cnctSpatialTunings_re', cnctSpatialTunings');
+allCorrs         = corr(spatialTunings_re_pooled', spatialTunings_pooled');
 PFstability.data = diag(allCorrs);
 
 nShuffles      = 10000;
@@ -940,7 +905,7 @@ reMAZE_tuning = cnctSpatialTunings_re; % the tuning could be PF or LT
 
 
 % xVar = cnctPOST_LTstabilities; % x variable
-xVar = cnctLTspatialInfo.post;  
+xVar = cnctLTspecificity.post;  
 
 
 % correlation bw post LTs and reMAZE PF (or theta LTs)
@@ -983,7 +948,7 @@ text(min(xVar), max(POST_reMAZE_tuning_corr), {sprintf('r = %.2f', rho); calAnno
 
 reMAZE_tuning = cnctSpatialTunings_re; % the tuning could be PF or LT
 
-xVar = cnctLTspatialInfo.post - cnctLTspatialInfo.maze_theta;
+xVar = cnctLTspecificity.post - cnctLTspecificity.maze_theta;
 
 
 % Caluclate to what extent the POST LTs predict reMAZE beyond MAZE theta
@@ -1042,75 +1007,6 @@ text(min(xVar), max(yVar), {sprintf('r = %.2f', rho); calAnnotPval(pval)}, 'font
 
 
 
-%%
-
-
-%%
-
-
-% a0_vector = sum(repmat(lm.Coefficients.Estimate(5:end), [1, nPosBins_interp]) .* intercept1');
-
-rr = lm.Fitted;
-rr = reshape(rr, size(A2));
-rr = (rr - repmat(nanmean(rr , 2), [1 nPosBins_interp]))./repmat(nanstd(rr , [], 2), [1 nPosBins_interp]);
-
-figure; 
-subplot(151)
-imagesc(A2); colormap('jet'); set(gca, 'YDir', 'normal'); caxis([-2 2]); title('remaze PFs')
-hold on
-plot(PFpeakLocs, 1:size(A2,1), 'linewidth', 1, 'color', 'y')
-
-subplot(152)
-imagesc(rr); colormap('jet'); set(gca, 'YDir', 'normal'); caxis([-2 2]); title('regression fit')
-hold on
-plot(PFpeakLocs, 1:size(A2,1), 'linewidth', 1, 'color', 'y')
-
-subplot(153)
-imagesc(cnctSpatialTunings); colormap('jet'); set(gca, 'YDir', 'normal'); caxis([-2 2]); title('MAZE PF')
-hold on
-plot(PFpeakLocs, 1:size(A2,1), 'linewidth', 1, 'color', 'y')
-
-subplot(154)
-imagesc(LTs_pooled.post); colormap('jet'); set(gca, 'YDir', 'normal'); caxis([-2 2]); title('POST LT')
-hold on
-plot(PFpeakLocs, 1:size(A2,1), 'linewidth', 1, 'color', 'y')
-
-subplot(155)
-imagesc(LTs_pooled.pre); colormap('jet'); set(gca, 'YDir', 'normal'); caxis([-2 2]); title('PRE LT')
-hold on
-plot(PFpeakLocs, 1:size(A2,1), 'linewidth', 1, 'color', 'y')
-
-
-
-
-
-% doing the shuffle to see if the coefficients for each variable stand out
-a0 = nan(nPosBins_interp, 1);
-a1 = nan(nPosBins_interp, 1);
-a2 = nan(nPosBins_interp, 1);
-
-for ibin= 1:nPosBins_interp
-
-    X = [learendTuning_pooled.PBEs.pre(:, ibin) cnctSpatialTunings_1(:, ibin) learendTuning_pooled.PBEs.pre(:, ibin).*cnctSpatialTunings_1(:, ibin)]; %
-
-    lm = fitlm(X, learendTuning_pooled.PBEs.post(:, ibin));
-    a0(ibin) = lm.Coefficients.Estimate(1);
-    
-    a1(ibin) = lm.Coefficients.Estimate(2);
-
-    a2(ibin) = lm.Coefficients.Estimate(3);
-
-end
-
-
-% % % test
-
-X = [LTs_pooled.pre LTPFcorrs_pooled.maze.data LTPFcorrs_pooled.post.data];
-
-% lm = fitlm(X, PFstability);
-lm = fitlm(X, LTPFcorrs_pooled.remaze.data);
-
-
 %% multiple regression analysis for individual neurons
 
 % A2 = cnctSpatialTunings_re; 
@@ -1120,7 +1016,6 @@ average_Y = nanmean([LTs_pooled.pre ; LTs_pooled.post]);
 average_Y = (average_Y - nanmean(average_Y))/nanstd(average_Y);
 
 background = repmat(average_Y, [size(A2, 1) 1]);
-
 
 nCells     = size(A2, 1);
 bg_indiv   = nan(nCells, 1);
